@@ -42,7 +42,7 @@ variables
   periodicEnergyOffers = [s \in Sellers |-> PeriodicOfferList],
   
   validBuyers = {}, validSellers = {},
-  mapBuyerToSeller = <<>>,
+  validBuyerWallet = {}, mapBuyerToSeller = {}, valBuyer,valSeller,
   clearingPrice = 0;
 
 (* Invariant Proposals
@@ -51,7 +51,7 @@ variables
 *)
 define
     SafeWithdrawal == 
-      \/ (bankBalance > 6000)     
+       (bankBalance > 6000)     
     
     (* Invariants that ensures that all sellers & buyers participating are validated before market session ends*)
     BuyersValidated ==  
@@ -62,27 +62,15 @@ define
 
 end define;
 
-
-(* macro that: -shows the listings of energy that seller prosumers wants to sell for every hour
-               -returns the energy bid amount submitted by to each seller prosumer 
-               via the bid & price variable
-*)
-macro matchingEnergy(periodicEnergyBids, pro)
-begin
-    
-    \*hardcode the sorting in descending order of the periodicEnergyBids
-    if pro \in validBuyers then
-        
-        periodicEnergyBids := [b \in validBuyers |-> <<EnergyBidAmountsSorted, EnergyBidPricesSorted>>];
-        clearingPrice := 2; \*energy price determined 
-    end if;
-    
-    
-    \* deduct the balance from buyer's money    
-    bankBalance := bankBalance - AMOUNT; 
-    
-\*    assert bankBalance > 6000; ADDED ASSERTION
-end macro
+\*(* macro that: -shows the listings of energy that seller prosumers wants to sell for every hour
+\*               -returns the energy bid amount submitted by to each seller prosumer 
+\*               via the bid & price variable
+\**)
+\*macro matchingEnergy(periodicEnergyBids, pro)
+\*begin
+\*    
+\*   skip;
+\*end macro
 
 (* macro that: -shows the listings of energy that buyer prosumers wants to buy energy for every hour
                -returns the energy bid amount submitted by to each seller prosumer 
@@ -116,14 +104,19 @@ end macro;
 
 
 (*----Validation of Sellers and Buyers------*)
-macro ValidateSellers(Sellers, registry)
+macro ValidateSellers(Sellers, registry, pro)
 begin
-   validSellers := {p \in Sellers : registry[p].valid = TRUE /\ registry[p].reputation > 0}
+\*   if pro \in registry then
+\*    validSellers := {pro \in Sellers : registry[pro].valid = TRUE /\ registry[pro].reputation > 0}
+      validSellers := validSellers \union {pro};
+\*   end if;
 end macro;
 
-macro ValidateBuyer(Buyers, registry)
+macro ValidateBuyer(Buyers, registry, pro)
 begin
-   validBuyers := {p \in Buyers : registry[p].valid = TRUE /\ registry[p].reputation > 0}
+\*   validBuyers := {p \in Buyers : registry[p].valid = TRUE /\ registry[p].reputation > 0};
+   validBuyers := validBuyers \union {pro};
+   validBuyerWallet := [b \in validBuyers |-> bankBalance]; \* maps validated buyer to bankBalance -- means they can take part in the market session
 end macro;
 
 (* procedure that simulates the market's matching process 
@@ -132,7 +125,25 @@ procedure matching(pro)
 begin
  matching:
     
-    matchingEnergy(periodicEnergyBids, pro);
+     \*hardcode the sorting in descending order of the periodicEnergyBids
+    if pro \in validBuyers then
+        periodicEnergyBids := [b \in validBuyers |-> <<EnergyBidAmountsSorted, EnergyBidPricesSorted>> ];
+        clearingPrice := 2; \*energy price determined 
+    end if;
+    
+    \*matching of buyers with prosumers (2B, 1S)
+    await validSellers /= {};
+    await validBuyers /= {};
+    valBuyer := CHOOSE x \in DOMAIN periodicEnergyBids: periodicEnergyBids[x][1][ListedPrice][2] > clearingPrice; \*compare bidprice with clearing price
+    valSeller :=  CHOOSE x \in validSellers: x \in validSellers;
+    mapBuyerToSeller := [mapBuyerToSeller EXCEPT ![valBuyer] = valSeller]; \*a buyer gets matched with 1 seller
+    
+    with seller \in DOMAIN mapBuyerToSeller do
+\*        \A wallet \in DOMAIN validBuyersWallet:
+            if DOMAIN validBuyerWallet = seller then
+                validBuyerWallet.seller := bankBalance - AMOUNT;
+            end if;
+    end with;
     
 \* returnMatch:
   return;
@@ -145,25 +156,23 @@ begin
   
   settlement:
   if pro \in validSellers then validSellers := validSellers \ {pro}; end if;
-  if pro \in validBuyers then validBuyers := validBuyers \ {pro};
-  end if;
+  if pro \in validBuyers then validBuyers := validBuyers \ {pro}; end if;
   
 \*   returnSettlement:
    return; 
 end procedure;
 
-(* procedure that simulates the market's sell process 
-*)
+(* procedure that simulates the market's sell process *)
 procedure registerMarketSellOrder (pro) 
 variables offer = 0;
           price = 0;
 begin
     sellOrder:
     \* if a prosumer reputation count is greater than threshold, it can validate other prosumer
-    if registry[pro].reputation > ReputationLimit then 
+    if registry[pro].reputation >= ReputationLimit then 
     
         \* validate the prosumers again to see if there is non-validated buyers
-        ValidateSellers(Sellers,registry);
+        ValidateSellers(Sellers,registry, pro);
         await validSellers /= {};
         getEnergyOffer(validSellers, 2, offer, price);
     end if;
@@ -180,10 +189,10 @@ variables bid = 0; price = 0;
 begin
   BuyOrder:
   \* if a prosumer reputation count is greater than threshold, it can validate other prosumer
-  if registry[pro].reputation > ReputationLimit then
+  if registry[pro].reputation >= ReputationLimit then
     
     \* validate the registry again to see if there is non-validated buyers
-    ValidateBuyer(Buyers,registry);
+    ValidateBuyer(Buyers,registry, pro);
 
 \*    validBuyers := registry \in {Buyers \in {registry -> [valid == TRUE, reputation > 0]}};
 
@@ -228,7 +237,7 @@ begin
   register_buyer:
      call registerAccount(self); \*register buyers
   validate_buyer: 
-    call validateAccount(other);   \*validate buyers
+    call validateAccount(self);   \*validate buyers
   buy_energy:
     call registerMarketBuyOrder(self);
   matching1:
@@ -244,11 +253,11 @@ begin
   register_seller:
     call registerAccount(self);
   validate:
-    call validateAccount(other);
+    call validateAccount(self);
   sell_energy:
     call registerMarketSellOrder(self);
   matching2:
-\*    await validBuyers = Buyers;
+    await validSellers /= {};
     call matching(self);
   settlement2:
 \*     await validSellers = Sellers;
@@ -256,24 +265,24 @@ begin
  end process;
 
 end algorithm*)
-\* BEGIN TRANSLATION (chksum(pcal) = "56d1bd5c" /\ chksum(tla) = "b6277d89")
-\* Label matching of procedure matching at line 74 col 5 changed to matching_
-\* Label settlement of procedure settlement at line 147 col 3 changed to settlement_
-\* Process variable other of process buyer at line 226 col 3 changed to other_
-\* Procedure variable price of procedure registerMarketSellOrder at line 159 col 11 changed to price_
-\* Parameter pro of procedure matching at line 131 col 20 changed to pro_
-\* Parameter pro of procedure settlement at line 143 col 22 changed to pro_s
-\* Parameter pro of procedure registerMarketSellOrder at line 157 col 36 changed to pro_r
-\* Parameter pro of procedure registerMarketBuyOrder at line 177 col 35 changed to pro_re
-\* Parameter pro of procedure validateAccount at line 199 col 27 changed to pro_v
+\* BEGIN TRANSLATION (chksum(pcal) = "57bb1fe5" /\ chksum(tla) = "abd3a9d9")
+\* Label matching of procedure matching at line 129 col 5 changed to matching_
+\* Label settlement of procedure settlement at line 158 col 3 changed to settlement_
+\* Process variable other of process buyer at line 235 col 3 changed to other_
+\* Procedure variable price of procedure registerMarketSellOrder at line 168 col 11 changed to price_
+\* Parameter pro of procedure matching at line 124 col 20 changed to pro_
+\* Parameter pro of procedure settlement at line 154 col 22 changed to pro_s
+\* Parameter pro of procedure registerMarketSellOrder at line 166 col 36 changed to pro_r
+\* Parameter pro of procedure registerMarketBuyOrder at line 186 col 35 changed to pro_re
+\* Parameter pro of procedure validateAccount at line 208 col 27 changed to pro_v
 CONSTANT defaultInitValue
 VARIABLES attack, bankBalance, registry, periodicEnergyBids, 
-          periodicEnergyOffers, validBuyers, validSellers, mapBuyerToSeller, 
-          clearingPrice, pc, stack
+          periodicEnergyOffers, validBuyers, validSellers, validBuyerWallet, 
+          mapBuyerToSeller, valBuyer, valSeller, clearingPrice, pc, stack
 
 (* define statement *)
 SafeWithdrawal ==
-  \/ (bankBalance > 6000)
+   (bankBalance > 6000)
 
 
 BuyersValidated ==
@@ -286,9 +295,10 @@ VARIABLES pro_, pro_s, pro_r, offer, price_, pro_re, bid, price, pro_v, pro,
           other_, other
 
 vars == << attack, bankBalance, registry, periodicEnergyBids, 
-           periodicEnergyOffers, validBuyers, validSellers, mapBuyerToSeller, 
-           clearingPrice, pc, stack, pro_, pro_s, pro_r, offer, price_, 
-           pro_re, bid, price, pro_v, pro, other_, other >>
+           periodicEnergyOffers, validBuyers, validSellers, validBuyerWallet, 
+           mapBuyerToSeller, valBuyer, valSeller, clearingPrice, pc, stack, 
+           pro_, pro_s, pro_r, offer, price_, pro_re, bid, price, pro_v, pro, 
+           other_, other >>
 
 ProcSet == (Buyers) \cup (Sellers)
 
@@ -300,7 +310,10 @@ Init == (* Global variables *)
         /\ periodicEnergyOffers = [s \in Sellers |-> PeriodicOfferList]
         /\ validBuyers = {}
         /\ validSellers = {}
-        /\ mapBuyerToSeller = <<>>
+        /\ validBuyerWallet = {}
+        /\ mapBuyerToSeller = {}
+        /\ valBuyer = defaultInitValue
+        /\ valSeller = defaultInitValue
         /\ clearingPrice = 0
         (* Procedure matching *)
         /\ pro_ = [ self \in ProcSet |-> defaultInitValue]
@@ -328,19 +341,29 @@ Init == (* Global variables *)
 
 matching_(self) == /\ pc[self] = "matching_"
                    /\ IF pro_[self] \in validBuyers
-                         THEN /\ periodicEnergyBids' = [b \in validBuyers |-> <<EnergyBidAmountsSorted, EnergyBidPricesSorted>>]
+                         THEN /\ periodicEnergyBids' = [b \in validBuyers |-> <<EnergyBidAmountsSorted, EnergyBidPricesSorted>> ]
                               /\ clearingPrice' = 2
                          ELSE /\ TRUE
                               /\ UNCHANGED << periodicEnergyBids, 
                                               clearingPrice >>
-                   /\ bankBalance' = bankBalance - AMOUNT
+                   /\ validSellers /= {}
+                   /\ validBuyers /= {}
+                   /\ valBuyer' = (CHOOSE x \in DOMAIN periodicEnergyBids': periodicEnergyBids'[x][1][ListedPrice][2] > clearingPrice')
+                   /\ valSeller' = (CHOOSE x \in validSellers: x \in validSellers)
+                   /\ mapBuyerToSeller' = [mapBuyerToSeller EXCEPT ![valBuyer'] = valSeller']
+                   /\ \E seller \in DOMAIN mapBuyerToSeller':
+                        IF DOMAIN validBuyerWallet = seller
+                           THEN /\ validBuyerWallet' = [validBuyerWallet EXCEPT !.seller = bankBalance - AMOUNT]
+                           ELSE /\ TRUE
+                                /\ UNCHANGED validBuyerWallet
                    /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                    /\ pro_' = [pro_ EXCEPT ![self] = Head(stack[self]).pro_]
                    /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
-                   /\ UNCHANGED << attack, registry, periodicEnergyOffers, 
-                                   validBuyers, validSellers, mapBuyerToSeller, 
-                                   pro_s, pro_r, offer, price_, pro_re, bid, 
-                                   price, pro_v, pro, other_, other >>
+                   /\ UNCHANGED << attack, bankBalance, registry, 
+                                   periodicEnergyOffers, validBuyers, 
+                                   validSellers, pro_s, pro_r, offer, price_, 
+                                   pro_re, bid, price, pro_v, pro, other_, 
+                                   other >>
 
 matching(self) == matching_(self)
 
@@ -358,15 +381,16 @@ settlement_(self) == /\ pc[self] = "settlement_"
                      /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
-                                     mapBuyerToSeller, clearingPrice, pro_, 
+                                     validBuyerWallet, mapBuyerToSeller, 
+                                     valBuyer, valSeller, clearingPrice, pro_, 
                                      pro_r, offer, price_, pro_re, bid, price, 
                                      pro_v, pro, other_, other >>
 
 settlement(self) == settlement_(self)
 
 sellOrder(self) == /\ pc[self] = "sellOrder"
-                   /\ IF registry[pro_r[self]].reputation > ReputationLimit
-                         THEN /\ validSellers' = {p \in Sellers : registry[p].valid = TRUE /\ registry[p].reputation > 0}
+                   /\ IF registry[pro_r[self]].reputation >= ReputationLimit
+                         THEN /\ validSellers' = (validSellers \union {pro_r[self]})
                               /\ validSellers' /= {}
                               /\ \E seller \in validSellers':
                                    /\ offer' = [offer EXCEPT ![self] = periodicEnergyOffers[seller][1][2]]
@@ -377,7 +401,8 @@ sellOrder(self) == /\ pc[self] = "sellOrder"
                    /\ pc' = [pc EXCEPT ![self] = "FinishSellOrder"]
                    /\ UNCHANGED << attack, bankBalance, registry, 
                                    periodicEnergyBids, periodicEnergyOffers, 
-                                   validBuyers, mapBuyerToSeller, 
+                                   validBuyers, validBuyerWallet, 
+                                   mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, stack, pro_, pro_s, pro_r, 
                                    pro_re, bid, price, pro_v, pro, other_, 
                                    other >>
@@ -391,28 +416,31 @@ FinishSellOrder(self) == /\ pc[self] = "FinishSellOrder"
                          /\ UNCHANGED << attack, bankBalance, registry, 
                                          periodicEnergyBids, 
                                          periodicEnergyOffers, validBuyers, 
-                                         validSellers, mapBuyerToSeller, 
+                                         validSellers, validBuyerWallet, 
+                                         mapBuyerToSeller, valBuyer, valSeller, 
                                          clearingPrice, pro_, pro_s, pro_re, 
                                          bid, price, pro_v, pro, other_, other >>
 
 registerMarketSellOrder(self) == sellOrder(self) \/ FinishSellOrder(self)
 
 BuyOrder(self) == /\ pc[self] = "BuyOrder"
-                  /\ IF registry[pro_re[self]].reputation > ReputationLimit
-                        THEN /\ validBuyers' = {p \in Buyers : registry[p].valid = TRUE /\ registry[p].reputation > 0}
+                  /\ IF registry[pro_re[self]].reputation >= ReputationLimit
+                        THEN /\ validBuyers' = (validBuyers \union {pro_re[self]})
+                             /\ validBuyerWallet' = [b \in validBuyers' |-> bankBalance]
                              /\ \E buyer \in validBuyers':
                                   /\ bid' = [bid EXCEPT ![self] = periodicEnergyBids[buyer][1][2]]
                                   /\ price' = [price EXCEPT ![self] = periodicEnergyBids[buyer][2][2]]
                                   /\ PrintT(<<"Bid:",bid'[self],"Price:",price'[self],"Buyers:", buyer>>)
                         ELSE /\ TRUE
-                             /\ UNCHANGED << validBuyers, bid, price >>
+                             /\ UNCHANGED << validBuyers, validBuyerWallet, 
+                                             bid, price >>
                   /\ pc' = [pc EXCEPT ![self] = "FinishBuyOrder"]
                   /\ UNCHANGED << attack, bankBalance, registry, 
                                   periodicEnergyBids, periodicEnergyOffers, 
-                                  validSellers, mapBuyerToSeller, 
-                                  clearingPrice, stack, pro_, pro_s, pro_r, 
-                                  offer, price_, pro_re, pro_v, pro, other_, 
-                                  other >>
+                                  validSellers, mapBuyerToSeller, valBuyer, 
+                                  valSeller, clearingPrice, stack, pro_, pro_s, 
+                                  pro_r, offer, price_, pro_re, pro_v, pro, 
+                                  other_, other >>
 
 FinishBuyOrder(self) == /\ pc[self] = "FinishBuyOrder"
                         /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -423,7 +451,8 @@ FinishBuyOrder(self) == /\ pc[self] = "FinishBuyOrder"
                         /\ UNCHANGED << attack, bankBalance, registry, 
                                         periodicEnergyBids, 
                                         periodicEnergyOffers, validBuyers, 
-                                        validSellers, mapBuyerToSeller, 
+                                        validSellers, validBuyerWallet, 
+                                        mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, pro_, pro_s, pro_r, 
                                         offer, price_, pro_v, pro, other_, 
                                         other >>
@@ -438,10 +467,11 @@ ValidateProsumer(self) == /\ pc[self] = "ValidateProsumer"
                           /\ UNCHANGED << attack, bankBalance, 
                                           periodicEnergyBids, 
                                           periodicEnergyOffers, validBuyers, 
-                                          validSellers, mapBuyerToSeller, 
-                                          clearingPrice, pro_, pro_s, pro_r, 
-                                          offer, price_, pro_re, bid, price, 
-                                          pro, other_, other >>
+                                          validSellers, validBuyerWallet, 
+                                          mapBuyerToSeller, valBuyer, 
+                                          valSeller, clearingPrice, pro_, 
+                                          pro_s, pro_r, offer, price_, pro_re, 
+                                          bid, price, pro, other_, other >>
 
 validateAccount(self) == ValidateProsumer(self)
 
@@ -451,10 +481,12 @@ RegisterProsumer(self) == /\ pc[self] = "RegisterProsumer"
                           /\ UNCHANGED << attack, bankBalance, 
                                           periodicEnergyBids, 
                                           periodicEnergyOffers, validBuyers, 
-                                          validSellers, mapBuyerToSeller, 
-                                          clearingPrice, stack, pro_, pro_s, 
-                                          pro_r, offer, price_, pro_re, bid, 
-                                          price, pro_v, pro, other_, other >>
+                                          validSellers, validBuyerWallet, 
+                                          mapBuyerToSeller, valBuyer, 
+                                          valSeller, clearingPrice, stack, 
+                                          pro_, pro_s, pro_r, offer, price_, 
+                                          pro_re, bid, price, pro_v, pro, 
+                                          other_, other >>
 
 FinishRegisterProsumer(self) == /\ pc[self] = "FinishRegisterProsumer"
                                 /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -464,11 +496,12 @@ FinishRegisterProsumer(self) == /\ pc[self] = "FinishRegisterProsumer"
                                                 periodicEnergyBids, 
                                                 periodicEnergyOffers, 
                                                 validBuyers, validSellers, 
-                                                mapBuyerToSeller, 
-                                                clearingPrice, pro_, pro_s, 
-                                                pro_r, offer, price_, pro_re, 
-                                                bid, price, pro_v, other_, 
-                                                other >>
+                                                validBuyerWallet, 
+                                                mapBuyerToSeller, valBuyer, 
+                                                valSeller, clearingPrice, pro_, 
+                                                pro_s, pro_r, offer, price_, 
+                                                pro_re, bid, price, pro_v, 
+                                                other_, other >>
 
 registerAccount(self) == RegisterProsumer(self)
                             \/ FinishRegisterProsumer(self)
@@ -483,13 +516,14 @@ register_buyer(self) == /\ pc[self] = "register_buyer"
                         /\ UNCHANGED << attack, bankBalance, registry, 
                                         periodicEnergyBids, 
                                         periodicEnergyOffers, validBuyers, 
-                                        validSellers, mapBuyerToSeller, 
+                                        validSellers, validBuyerWallet, 
+                                        mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, pro_, pro_s, pro_r, 
                                         offer, price_, pro_re, bid, price, 
                                         pro_v, other_, other >>
 
 validate_buyer(self) == /\ pc[self] = "validate_buyer"
-                        /\ /\ pro_v' = [pro_v EXCEPT ![self] = other_[self]]
+                        /\ /\ pro_v' = [pro_v EXCEPT ![self] = self]
                            /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "validateAccount",
                                                                     pc        |->  "buy_energy",
                                                                     pro_v     |->  pro_v[self] ] >>
@@ -498,7 +532,8 @@ validate_buyer(self) == /\ pc[self] = "validate_buyer"
                         /\ UNCHANGED << attack, bankBalance, registry, 
                                         periodicEnergyBids, 
                                         periodicEnergyOffers, validBuyers, 
-                                        validSellers, mapBuyerToSeller, 
+                                        validSellers, validBuyerWallet, 
+                                        mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, pro_, pro_s, pro_r, 
                                         offer, price_, pro_re, bid, price, pro, 
                                         other_, other >>
@@ -517,7 +552,8 @@ buy_energy(self) == /\ pc[self] = "buy_energy"
                     /\ UNCHANGED << attack, bankBalance, registry, 
                                     periodicEnergyBids, periodicEnergyOffers, 
                                     validBuyers, validSellers, 
-                                    mapBuyerToSeller, clearingPrice, pro_, 
+                                    validBuyerWallet, mapBuyerToSeller, 
+                                    valBuyer, valSeller, clearingPrice, pro_, 
                                     pro_s, pro_r, offer, price_, pro_v, pro, 
                                     other_, other >>
 
@@ -530,7 +566,8 @@ matching1(self) == /\ pc[self] = "matching1"
                    /\ pc' = [pc EXCEPT ![self] = "matching_"]
                    /\ UNCHANGED << attack, bankBalance, registry, 
                                    periodicEnergyBids, periodicEnergyOffers, 
-                                   validBuyers, validSellers, mapBuyerToSeller, 
+                                   validBuyers, validSellers, validBuyerWallet, 
+                                   mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, pro_s, pro_r, offer, price_, 
                                    pro_re, bid, price, pro_v, pro, other_, 
                                    other >>
@@ -545,7 +582,8 @@ settlement1(self) == /\ pc[self] = "settlement1"
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
-                                     mapBuyerToSeller, clearingPrice, pro_, 
+                                     validBuyerWallet, mapBuyerToSeller, 
+                                     valBuyer, valSeller, clearingPrice, pro_, 
                                      pro_r, offer, price_, pro_re, bid, price, 
                                      pro_v, pro, other_, other >>
 
@@ -563,13 +601,14 @@ register_seller(self) == /\ pc[self] = "register_seller"
                          /\ UNCHANGED << attack, bankBalance, registry, 
                                          periodicEnergyBids, 
                                          periodicEnergyOffers, validBuyers, 
-                                         validSellers, mapBuyerToSeller, 
+                                         validSellers, validBuyerWallet, 
+                                         mapBuyerToSeller, valBuyer, valSeller, 
                                          clearingPrice, pro_, pro_s, pro_r, 
                                          offer, price_, pro_re, bid, price, 
                                          pro_v, other_, other >>
 
 validate(self) == /\ pc[self] = "validate"
-                  /\ /\ pro_v' = [pro_v EXCEPT ![self] = other[self]]
+                  /\ /\ pro_v' = [pro_v EXCEPT ![self] = self]
                      /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "validateAccount",
                                                               pc        |->  "sell_energy",
                                                               pro_v     |->  pro_v[self] ] >>
@@ -577,7 +616,8 @@ validate(self) == /\ pc[self] = "validate"
                   /\ pc' = [pc EXCEPT ![self] = "ValidateProsumer"]
                   /\ UNCHANGED << attack, bankBalance, registry, 
                                   periodicEnergyBids, periodicEnergyOffers, 
-                                  validBuyers, validSellers, mapBuyerToSeller, 
+                                  validBuyers, validSellers, validBuyerWallet, 
+                                  mapBuyerToSeller, valBuyer, valSeller, 
                                   clearingPrice, pro_, pro_s, pro_r, offer, 
                                   price_, pro_re, bid, price, pro, other_, 
                                   other >>
@@ -596,11 +636,13 @@ sell_energy(self) == /\ pc[self] = "sell_energy"
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
-                                     mapBuyerToSeller, clearingPrice, pro_, 
+                                     validBuyerWallet, mapBuyerToSeller, 
+                                     valBuyer, valSeller, clearingPrice, pro_, 
                                      pro_s, pro_re, bid, price, pro_v, pro, 
                                      other_, other >>
 
 matching2(self) == /\ pc[self] = "matching2"
+                   /\ validSellers /= {}
                    /\ /\ pro_' = [pro_ EXCEPT ![self] = self]
                       /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "matching",
                                                                pc        |->  "settlement2",
@@ -609,7 +651,8 @@ matching2(self) == /\ pc[self] = "matching2"
                    /\ pc' = [pc EXCEPT ![self] = "matching_"]
                    /\ UNCHANGED << attack, bankBalance, registry, 
                                    periodicEnergyBids, periodicEnergyOffers, 
-                                   validBuyers, validSellers, mapBuyerToSeller, 
+                                   validBuyers, validSellers, validBuyerWallet, 
+                                   mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, pro_s, pro_r, offer, price_, 
                                    pro_re, bid, price, pro_v, pro, other_, 
                                    other >>
@@ -624,7 +667,8 @@ settlement2(self) == /\ pc[self] = "settlement2"
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
-                                     mapBuyerToSeller, clearingPrice, pro_, 
+                                     validBuyerWallet, mapBuyerToSeller, 
+                                     valBuyer, valSeller, clearingPrice, pro_, 
                                      pro_r, offer, price_, pro_re, bid, price, 
                                      pro_v, pro, other_, other >>
 
@@ -665,5 +709,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sat Jan 20 19:54:58 GMT 2024 by naufa
+\* Last modified Tue Jan 30 11:23:06 GMT 2024 by naufa
 \* Created Fri Jan 05 10:01:04 GMT 2024 by naufa
