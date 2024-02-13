@@ -42,10 +42,12 @@ variables
   periodicEnergyOffers = [s \in Sellers |-> PeriodicOfferList],
   
   validBuyers = {}, validSellers = {},
-  validBuyerWallet = {}, mapBuyerToSeller = {}, valBuyer,valSeller,
+  validBuyerWallet = [b \in Buyers |-> 0], mapBuyerToSeller = [b \in Buyers |-> Sellers], valBuyer,valSeller,
   clearingPrice = 0,
   
-  temp = 0, flagValBuyer = [b \in validBuyers |-> FALSE];
+  temp = 0, flagValBuyer = [b \in Buyers |-> FALSE],
+  
+  finalValBuyer = [b \in Buyers |-> 0];
 
 (* Invariant Proposals
 (1) Prevent Attacks
@@ -53,15 +55,22 @@ variables
 *)
 define
     SafeWithdrawal == 
-       (bankBalance > 6000)     
+       <>(bankBalance > 6000)
+       
+    SafeWithdrawal2 == SafeWithdrawal
     
+    FinalAmountBank == 
+             <>(\A x \in validBuyers: finalValBuyer[x] = 6000)
+    
+    FinalAmountBank2 == FinalAmountBank
+         
     (* Invariants that ensures that all sellers & buyers participating are validated before market session ends*)
     BuyersValidated ==  
-    \/ \A x \in validBuyers : x \in Buyers
+    /\ \A x \in validBuyers : x \in Buyers
     
     SellersValidated ==
-    \/ \A x \in validSellers : x \in Sellers
-
+    /\ \A x \in validSellers : x \in Sellers
+    
 end define;
 
 \*(* macro that: -shows the listings of energy that seller prosumers wants to sell for every hour
@@ -118,15 +127,18 @@ macro ValidateBuyer(Buyers, registry, pro)
 begin
 \*   validBuyers := {p \in Buyers : registry[p].valid = TRUE /\ registry[p].reputation > 0};
    validBuyers := validBuyers \union {pro};
-   validBuyerWallet := [b \in validBuyers |-> bankBalance]; \* maps validated buyer to bankBalance -- means they can take part in the market session
+   validBuyerWallet := [b \in Buyers |-> bankBalance]; \* maps validated buyer to bankBalance -- means they can take part in the market session
 end macro;
 
 (* procedure that simulates the market's matching process 
 *)
 procedure matching(pro)
+variable checkBuyer, UnmappedSellers= {};
+
 begin
  matching:
- 
+    await validSellers /= {};
+    await validBuyers /= {};
     await flagValBuyer /= << >>;
     if validBuyers /= {} then
     
@@ -139,25 +151,57 @@ begin
         end if;
         
     \*matching of buyers with prosumers (2B, 1S)
+    \*only 1 buyer can match with 1 seller at a time
+    
+    \* need to add a statement that checks if there is already a flagValBuyer set to true must wait
+    
+    selectSeller:
+    UnmappedSellers := {x \in validSellers: ~\E y \in validBuyers: mapBuyerToSeller[y] = {x}};
+    
     selectBuyer:
-         
-      if validBuyers /= {} then
+      if validBuyers /= {}  then
         with b \in validBuyers do
-            flagValBuyer[b] := TRUE;
+            with  s \in validSellers do \* problem since validSellers is not mapped exclusively to just one buyer
+                flagValBuyer[b] := TRUE;
+                mapBuyerToSeller[b] := {s};
+            end with;
         end with;
       end if;
+    await \E bool \in DOMAIN flagValBuyer: flagValBuyer[bool] = TRUE;
     
-    criticalSection:
-    print("KAT SINI");
-    \*    await \A DOMAIN x \in flagValBuyer: flagValBuyer[x] = TRUE;
-        temp:= CHOOSE buyer \in DOMAIN flagValBuyer: flagValBuyer[buyer] = TRUE;
+    \*lock critical section behaviour by checking the mapping
+    checkBuyer := CHOOSE buyer \in DOMAIN flagValBuyer: flagValBuyer[buyer] = TRUE;
+    
+    if \E bool \in  DOMAIN flagValBuyer: flagValBuyer[bool]  then
+        criticalSection:
+\*            temp:= flagValBuyer[checkBuyer];\*CHOOSE buyer \in DOMAIN flagValBuyer: flagValBuyer[buyer] = TRUE;
+\*            print("KAT SINI");
+            \*deduct buyers bankBalance
+            validBuyerWallet[checkBuyer] := bankBalance - AMOUNT;
+            finalValBuyer := validBuyerWallet;
+                
+    else 
+    
+    selectBuyer2:
+         with b \in validBuyers do
+            with  s \in validSellers do \* problem since validSellers is not mapped exclusively to just one buyer
+                flagValBuyer[b] := TRUE;
+                mapBuyerToSeller[b] := {s};
+            end with;
+        end with;
         
-        \*deduct buyers bankBalance
-        validBuyerWallet[temp] := bankBalance - AMOUNT;
-    
+        criticalSection2:
+    \*    print("KAT SINI");
+\*            temp:= flagValBuyer[checkBuyer];\*CHOOSE buyer \in DOMAIN flagValBuyer: flagValBuyer[buyer] = TRUE;
+            \*deduct buyers bankBalance
+            
+            validBuyerWallet[checkBuyer] := bankBalance - AMOUNT;
+            finalValBuyer := validBuyerWallet;
+     end if;
+     
     \*reset flag to false
     resetCounter:
-    flagValBuyer[temp] := FALSE; 
+    flagValBuyer[checkBuyer] := FALSE; 
    end if;
     
  returnMatch:
@@ -170,8 +214,11 @@ procedure settlement(pro)
 begin
   
   settlement:
-  if pro \in validSellers then validSellers := validSellers \ {pro}; end if;
-  if pro \in validBuyers then validBuyers := validBuyers \ {pro}; end if;
+\*  if pro \in validSellers then
+\*   validSell/ers := validSellers \ {pro}; \*end if;
+\*  if pro \in validBuyers then 
+\*  validBuyers := validBuyers \ {pro}; \*end if;
+    skip;
   
 \*   returnSettlement:
    return; 
@@ -257,6 +304,7 @@ begin
   buy_energy:
     call registerMarketBuyOrder(self);
     Chill:
+     await validBuyers = Buyers;
     if self \in validBuyers then
         flagValBuyer := [elem \in validBuyers |-> FALSE];
 \*        print(flagValBuyer);
@@ -280,49 +328,57 @@ begin
     call registerMarketSellOrder(self);
   matching2:
 \*    await validSellers /= {};
-\*    call matching(self);
-      skip;
+    call matching(self);
+\*      skip;
   settlement2:
 \*     await validSellers = Sellers;
     call settlement(self);
  end process;
 
 end algorithm*)
-\* BEGIN TRANSLATION (chksum(pcal) = "f13bcb83" /\ chksum(tla) = "30b7e2a6")
-\* Label matching of procedure matching at line 130 col 5 changed to matching_
-\* Label settlement of procedure settlement at line 173 col 3 changed to settlement_
-\* Process variable other of process buyer at line 250 col 3 changed to other_
-\* Procedure variable price of procedure registerMarketSellOrder at line 183 col 11 changed to price_
-\* Parameter pro of procedure matching at line 126 col 20 changed to pro_
-\* Parameter pro of procedure settlement at line 169 col 22 changed to pro_s
-\* Parameter pro of procedure registerMarketSellOrder at line 181 col 36 changed to pro_r
-\* Parameter pro of procedure registerMarketBuyOrder at line 201 col 35 changed to pro_re
-\* Parameter pro of procedure validateAccount at line 223 col 27 changed to pro_v
+\* BEGIN TRANSLATION (chksum(pcal) = "550a0a4e" /\ chksum(tla) = "e137f278")
+\* Label matching of procedure matching at line 140 col 5 changed to matching_
+\* Label settlement of procedure settlement at line 221 col 5 changed to settlement_
+\* Process variable other of process buyer at line 297 col 3 changed to other_
+\* Procedure variable price of procedure registerMarketSellOrder at line 230 col 11 changed to price_
+\* Parameter pro of procedure matching at line 135 col 20 changed to pro_
+\* Parameter pro of procedure settlement at line 213 col 22 changed to pro_s
+\* Parameter pro of procedure registerMarketSellOrder at line 228 col 36 changed to pro_r
+\* Parameter pro of procedure registerMarketBuyOrder at line 248 col 35 changed to pro_re
+\* Parameter pro of procedure validateAccount at line 270 col 27 changed to pro_v
 CONSTANT defaultInitValue
 VARIABLES attack, bankBalance, registry, periodicEnergyBids, 
           periodicEnergyOffers, validBuyers, validSellers, validBuyerWallet, 
           mapBuyerToSeller, valBuyer, valSeller, clearingPrice, temp, 
-          flagValBuyer, pc, stack
+          flagValBuyer, finalValBuyer, pc, stack
 
 (* define statement *)
 SafeWithdrawal ==
-   (bankBalance > 6000)
+   <>(bankBalance > 6000)
+
+SafeWithdrawal2 == SafeWithdrawal
+
+FinalAmountBank ==
+         <>(\A x \in validBuyers: finalValBuyer[x] = 6000)
+
+FinalAmountBank2 == FinalAmountBank
 
 
 BuyersValidated ==
-\/ \A x \in validBuyers : x \in Buyers
+/\ \A x \in validBuyers : x \in Buyers
 
 SellersValidated ==
-\/ \A x \in validSellers : x \in Sellers
+/\ \A x \in validSellers : x \in Sellers
 
-VARIABLES pro_, pro_s, pro_r, offer, price_, pro_re, bid, price, pro_v, pro, 
-          other_, test, other
+VARIABLES pro_, checkBuyer, UnmappedSellers, pro_s, pro_r, offer, price_, 
+          pro_re, bid, price, pro_v, pro, other_, test, other
 
 vars == << attack, bankBalance, registry, periodicEnergyBids, 
            periodicEnergyOffers, validBuyers, validSellers, validBuyerWallet, 
            mapBuyerToSeller, valBuyer, valSeller, clearingPrice, temp, 
-           flagValBuyer, pc, stack, pro_, pro_s, pro_r, offer, price_, pro_re, 
-           bid, price, pro_v, pro, other_, test, other >>
+           flagValBuyer, finalValBuyer, pc, stack, pro_, checkBuyer, 
+           UnmappedSellers, pro_s, pro_r, offer, price_, pro_re, bid, price, 
+           pro_v, pro, other_, test, other >>
 
 ProcSet == (Buyers) \cup (Sellers)
 
@@ -334,15 +390,18 @@ Init == (* Global variables *)
         /\ periodicEnergyOffers = [s \in Sellers |-> PeriodicOfferList]
         /\ validBuyers = {}
         /\ validSellers = {}
-        /\ validBuyerWallet = {}
-        /\ mapBuyerToSeller = {}
+        /\ validBuyerWallet = [b \in Buyers |-> 0]
+        /\ mapBuyerToSeller = [b \in Buyers |-> Sellers]
         /\ valBuyer = defaultInitValue
         /\ valSeller = defaultInitValue
         /\ clearingPrice = 0
         /\ temp = 0
-        /\ flagValBuyer = [b \in validBuyers |-> FALSE]
+        /\ flagValBuyer = [b \in Buyers |-> FALSE]
+        /\ finalValBuyer = [b \in Buyers |-> 0]
         (* Procedure matching *)
         /\ pro_ = [ self \in ProcSet |-> defaultInitValue]
+        /\ checkBuyer = [ self \in ProcSet |-> defaultInitValue]
+        /\ UnmappedSellers = [ self \in ProcSet |-> {}]
         (* Procedure settlement *)
         /\ pro_s = [ self \in ProcSet |-> defaultInitValue]
         (* Procedure registerMarketSellOrder *)
@@ -367,6 +426,8 @@ Init == (* Global variables *)
                                         [] self \in Sellers -> "register_seller"]
 
 matching_(self) == /\ pc[self] = "matching_"
+                   /\ validSellers /= {}
+                   /\ validBuyers /= {}
                    /\ flagValBuyer /= << >>
                    /\ IF validBuyers /= {}
                          THEN /\ pc' = [pc EXCEPT ![self] = "sorting"]
@@ -375,9 +436,11 @@ matching_(self) == /\ pc[self] = "matching_"
                                    periodicEnergyBids, periodicEnergyOffers, 
                                    validBuyers, validSellers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
-                                   clearingPrice, temp, flagValBuyer, stack, 
-                                   pro_, pro_s, pro_r, offer, price_, pro_re, 
-                                   bid, price, pro_v, pro, other_, test, other >>
+                                   clearingPrice, temp, flagValBuyer, 
+                                   finalValBuyer, stack, pro_, checkBuyer, 
+                                   UnmappedSellers, pro_s, pro_r, offer, 
+                                   price_, pro_re, bid, price, pro_v, pro, 
+                                   other_, test, other >>
 
 sorting(self) == /\ pc[self] = "sorting"
                  /\ IF pro_[self] \in validBuyers
@@ -385,60 +448,113 @@ sorting(self) == /\ pc[self] = "sorting"
                             /\ clearingPrice' = 1
                        ELSE /\ TRUE
                             /\ UNCHANGED << periodicEnergyBids, clearingPrice >>
-                 /\ pc' = [pc EXCEPT ![self] = "selectBuyer"]
+                 /\ pc' = [pc EXCEPT ![self] = "selectSeller"]
                  /\ UNCHANGED << attack, bankBalance, registry, 
                                  periodicEnergyOffers, validBuyers, 
                                  validSellers, validBuyerWallet, 
                                  mapBuyerToSeller, valBuyer, valSeller, temp, 
-                                 flagValBuyer, stack, pro_, pro_s, pro_r, 
+                                 flagValBuyer, finalValBuyer, stack, pro_, 
+                                 checkBuyer, UnmappedSellers, pro_s, pro_r, 
                                  offer, price_, pro_re, bid, price, pro_v, pro, 
                                  other_, test, other >>
+
+selectSeller(self) == /\ pc[self] = "selectSeller"
+                      /\ UnmappedSellers' = [UnmappedSellers EXCEPT ![self] = {x \in validSellers: ~\E y \in validBuyers: mapBuyerToSeller[y] = {x}}]
+                      /\ pc' = [pc EXCEPT ![self] = "selectBuyer"]
+                      /\ UNCHANGED << attack, bankBalance, registry, 
+                                      periodicEnergyBids, periodicEnergyOffers, 
+                                      validBuyers, validSellers, 
+                                      validBuyerWallet, mapBuyerToSeller, 
+                                      valBuyer, valSeller, clearingPrice, temp, 
+                                      flagValBuyer, finalValBuyer, stack, pro_, 
+                                      checkBuyer, pro_s, pro_r, offer, price_, 
+                                      pro_re, bid, price, pro_v, pro, other_, 
+                                      test, other >>
 
 selectBuyer(self) == /\ pc[self] = "selectBuyer"
                      /\ IF validBuyers /= {}
                            THEN /\ \E b \in validBuyers:
-                                     flagValBuyer' = [flagValBuyer EXCEPT ![b] = TRUE]
+                                     \E s \in validSellers:
+                                       /\ flagValBuyer' = [flagValBuyer EXCEPT ![b] = TRUE]
+                                       /\ mapBuyerToSeller' = [mapBuyerToSeller EXCEPT ![b] = {s}]
                            ELSE /\ TRUE
-                                /\ UNCHANGED flagValBuyer
-                     /\ pc' = [pc EXCEPT ![self] = "criticalSection"]
+                                /\ UNCHANGED << mapBuyerToSeller, flagValBuyer >>
+                     /\ \E bool \in DOMAIN flagValBuyer': flagValBuyer'[bool] = TRUE
+                     /\ checkBuyer' = [checkBuyer EXCEPT ![self] = CHOOSE buyer \in DOMAIN flagValBuyer': flagValBuyer'[buyer] = TRUE]
+                     /\ IF \E bool \in  DOMAIN flagValBuyer': flagValBuyer'[bool]
+                           THEN /\ pc' = [pc EXCEPT ![self] = "criticalSection"]
+                           ELSE /\ pc' = [pc EXCEPT ![self] = "selectBuyer2"]
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
-                                     validBuyerWallet, mapBuyerToSeller, 
-                                     valBuyer, valSeller, clearingPrice, temp, 
-                                     stack, pro_, pro_s, pro_r, offer, price_, 
-                                     pro_re, bid, price, pro_v, pro, other_, 
-                                     test, other >>
+                                     validBuyerWallet, valBuyer, valSeller, 
+                                     clearingPrice, temp, finalValBuyer, stack, 
+                                     pro_, UnmappedSellers, pro_s, pro_r, 
+                                     offer, price_, pro_re, bid, price, pro_v, 
+                                     pro, other_, test, other >>
 
 criticalSection(self) == /\ pc[self] = "criticalSection"
-                         /\ PrintT(("KAT SINI"))
-                         /\ temp' = (CHOOSE buyer \in DOMAIN flagValBuyer: flagValBuyer[buyer] = TRUE)
-                         /\ validBuyerWallet' = [validBuyerWallet EXCEPT ![temp'] = bankBalance - AMOUNT]
+                         /\ validBuyerWallet' = [validBuyerWallet EXCEPT ![checkBuyer[self]] = bankBalance - AMOUNT]
+                         /\ finalValBuyer' = validBuyerWallet'
                          /\ pc' = [pc EXCEPT ![self] = "resetCounter"]
                          /\ UNCHANGED << attack, bankBalance, registry, 
                                          periodicEnergyBids, 
                                          periodicEnergyOffers, validBuyers, 
                                          validSellers, mapBuyerToSeller, 
                                          valBuyer, valSeller, clearingPrice, 
-                                         flagValBuyer, stack, pro_, pro_s, 
+                                         temp, flagValBuyer, stack, pro_, 
+                                         checkBuyer, UnmappedSellers, pro_s, 
                                          pro_r, offer, price_, pro_re, bid, 
                                          price, pro_v, pro, other_, test, 
                                          other >>
 
+selectBuyer2(self) == /\ pc[self] = "selectBuyer2"
+                      /\ \E b \in validBuyers:
+                           \E s \in validSellers:
+                             /\ flagValBuyer' = [flagValBuyer EXCEPT ![b] = TRUE]
+                             /\ mapBuyerToSeller' = [mapBuyerToSeller EXCEPT ![b] = {s}]
+                      /\ pc' = [pc EXCEPT ![self] = "criticalSection2"]
+                      /\ UNCHANGED << attack, bankBalance, registry, 
+                                      periodicEnergyBids, periodicEnergyOffers, 
+                                      validBuyers, validSellers, 
+                                      validBuyerWallet, valBuyer, valSeller, 
+                                      clearingPrice, temp, finalValBuyer, 
+                                      stack, pro_, checkBuyer, UnmappedSellers, 
+                                      pro_s, pro_r, offer, price_, pro_re, bid, 
+                                      price, pro_v, pro, other_, test, other >>
+
+criticalSection2(self) == /\ pc[self] = "criticalSection2"
+                          /\ validBuyerWallet' = [validBuyerWallet EXCEPT ![checkBuyer[self]] = bankBalance - AMOUNT]
+                          /\ finalValBuyer' = validBuyerWallet'
+                          /\ pc' = [pc EXCEPT ![self] = "resetCounter"]
+                          /\ UNCHANGED << attack, bankBalance, registry, 
+                                          periodicEnergyBids, 
+                                          periodicEnergyOffers, validBuyers, 
+                                          validSellers, mapBuyerToSeller, 
+                                          valBuyer, valSeller, clearingPrice, 
+                                          temp, flagValBuyer, stack, pro_, 
+                                          checkBuyer, UnmappedSellers, pro_s, 
+                                          pro_r, offer, price_, pro_re, bid, 
+                                          price, pro_v, pro, other_, test, 
+                                          other >>
+
 resetCounter(self) == /\ pc[self] = "resetCounter"
-                      /\ flagValBuyer' = [flagValBuyer EXCEPT ![temp] = FALSE]
+                      /\ flagValBuyer' = [flagValBuyer EXCEPT ![checkBuyer[self]] = FALSE]
                       /\ pc' = [pc EXCEPT ![self] = "returnMatch"]
                       /\ UNCHANGED << attack, bankBalance, registry, 
                                       periodicEnergyBids, periodicEnergyOffers, 
                                       validBuyers, validSellers, 
                                       validBuyerWallet, mapBuyerToSeller, 
                                       valBuyer, valSeller, clearingPrice, temp, 
-                                      stack, pro_, pro_s, pro_r, offer, price_, 
-                                      pro_re, bid, price, pro_v, pro, other_, 
-                                      test, other >>
+                                      finalValBuyer, stack, pro_, checkBuyer, 
+                                      UnmappedSellers, pro_s, pro_r, offer, 
+                                      price_, pro_re, bid, price, pro_v, pro, 
+                                      other_, test, other >>
 
 returnMatch(self) == /\ pc[self] = "returnMatch"
                      /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
+                     /\ checkBuyer' = [checkBuyer EXCEPT ![self] = Head(stack[self]).checkBuyer]
+                     /\ UnmappedSellers' = [UnmappedSellers EXCEPT ![self] = Head(stack[self]).UnmappedSellers]
                      /\ pro_' = [pro_ EXCEPT ![self] = Head(stack[self]).pro_]
                      /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                      /\ UNCHANGED << attack, bankBalance, registry, 
@@ -446,33 +562,29 @@ returnMatch(self) == /\ pc[self] = "returnMatch"
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, pro_s, pro_r, offer, price_, 
-                                     pro_re, bid, price, pro_v, pro, other_, 
-                                     test, other >>
+                                     flagValBuyer, finalValBuyer, pro_s, pro_r, 
+                                     offer, price_, pro_re, bid, price, pro_v, 
+                                     pro, other_, test, other >>
 
-matching(self) == matching_(self) \/ sorting(self) \/ selectBuyer(self)
-                     \/ criticalSection(self) \/ resetCounter(self)
-                     \/ returnMatch(self)
+matching(self) == matching_(self) \/ sorting(self) \/ selectSeller(self)
+                     \/ selectBuyer(self) \/ criticalSection(self)
+                     \/ selectBuyer2(self) \/ criticalSection2(self)
+                     \/ resetCounter(self) \/ returnMatch(self)
 
 settlement_(self) == /\ pc[self] = "settlement_"
-                     /\ IF pro_s[self] \in validSellers
-                           THEN /\ validSellers' = validSellers \ {pro_s[self]}
-                           ELSE /\ TRUE
-                                /\ UNCHANGED validSellers
-                     /\ IF pro_s[self] \in validBuyers
-                           THEN /\ validBuyers' = validBuyers \ {pro_s[self]}
-                           ELSE /\ TRUE
-                                /\ UNCHANGED validBuyers
+                     /\ TRUE
                      /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                      /\ pro_s' = [pro_s EXCEPT ![self] = Head(stack[self]).pro_s]
                      /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
+                                     validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, pro_, pro_r, offer, price_, 
-                                     pro_re, bid, price, pro_v, pro, other_, 
-                                     test, other >>
+                                     flagValBuyer, finalValBuyer, pro_, 
+                                     checkBuyer, UnmappedSellers, pro_r, offer, 
+                                     price_, pro_re, bid, price, pro_v, pro, 
+                                     other_, test, other >>
 
 settlement(self) == settlement_(self)
 
@@ -490,9 +602,10 @@ sellOrder(self) == /\ pc[self] = "sellOrder"
                                    periodicEnergyBids, periodicEnergyOffers, 
                                    validBuyers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
-                                   clearingPrice, temp, flagValBuyer, stack, 
-                                   pro_, pro_s, pro_r, pro_re, bid, price, 
-                                   pro_v, pro, other_, test, other >>
+                                   clearingPrice, temp, flagValBuyer, 
+                                   finalValBuyer, stack, pro_, checkBuyer, 
+                                   UnmappedSellers, pro_s, pro_r, pro_re, bid, 
+                                   price, pro_v, pro, other_, test, other >>
 
 FinishSellOrder(self) == /\ pc[self] = "FinishSellOrder"
                          /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -506,15 +619,17 @@ FinishSellOrder(self) == /\ pc[self] = "FinishSellOrder"
                                          validSellers, validBuyerWallet, 
                                          mapBuyerToSeller, valBuyer, valSeller, 
                                          clearingPrice, temp, flagValBuyer, 
-                                         pro_, pro_s, pro_re, bid, price, 
-                                         pro_v, pro, other_, test, other >>
+                                         finalValBuyer, pro_, checkBuyer, 
+                                         UnmappedSellers, pro_s, pro_re, bid, 
+                                         price, pro_v, pro, other_, test, 
+                                         other >>
 
 registerMarketSellOrder(self) == sellOrder(self) \/ FinishSellOrder(self)
 
 BuyOrder(self) == /\ pc[self] = "BuyOrder"
                   /\ IF registry[pro_re[self]].reputation >= ReputationLimit
                         THEN /\ validBuyers' = (validBuyers \union {pro_re[self]})
-                             /\ validBuyerWallet' = [b \in validBuyers' |-> bankBalance]
+                             /\ validBuyerWallet' = [b \in Buyers |-> bankBalance]
                              /\ \E buyer \in validBuyers':
                                   /\ bid' = [bid EXCEPT ![self] = periodicEnergyBids[buyer][1][2]]
                                   /\ price' = [price EXCEPT ![self] = periodicEnergyBids[buyer][2][2]]
@@ -526,7 +641,8 @@ BuyOrder(self) == /\ pc[self] = "BuyOrder"
                                   periodicEnergyBids, periodicEnergyOffers, 
                                   validSellers, mapBuyerToSeller, valBuyer, 
                                   valSeller, clearingPrice, temp, flagValBuyer, 
-                                  stack, pro_, pro_s, pro_r, offer, price_, 
+                                  finalValBuyer, stack, pro_, checkBuyer, 
+                                  UnmappedSellers, pro_s, pro_r, offer, price_, 
                                   pro_re, pro_v, pro, other_, test, other >>
 
 FinishBuyOrder(self) == /\ pc[self] = "FinishBuyOrder"
@@ -541,8 +657,10 @@ FinishBuyOrder(self) == /\ pc[self] = "FinishBuyOrder"
                                         validSellers, validBuyerWallet, 
                                         mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, temp, flagValBuyer, 
-                                        pro_, pro_s, pro_r, offer, price_, 
-                                        pro_v, pro, other_, test, other >>
+                                        finalValBuyer, pro_, checkBuyer, 
+                                        UnmappedSellers, pro_s, pro_r, offer, 
+                                        price_, pro_v, pro, other_, test, 
+                                        other >>
 
 registerMarketBuyOrder(self) == BuyOrder(self) \/ FinishBuyOrder(self)
 
@@ -557,9 +675,10 @@ ValidateProsumer(self) == /\ pc[self] = "ValidateProsumer"
                                           validSellers, validBuyerWallet, 
                                           mapBuyerToSeller, valBuyer, 
                                           valSeller, clearingPrice, temp, 
-                                          flagValBuyer, pro_, pro_s, pro_r, 
-                                          offer, price_, pro_re, bid, price, 
-                                          pro, other_, test, other >>
+                                          flagValBuyer, finalValBuyer, pro_, 
+                                          checkBuyer, UnmappedSellers, pro_s, 
+                                          pro_r, offer, price_, pro_re, bid, 
+                                          price, pro, other_, test, other >>
 
 validateAccount(self) == ValidateProsumer(self)
 
@@ -572,9 +691,10 @@ RegisterProsumer(self) == /\ pc[self] = "RegisterProsumer"
                                           validSellers, validBuyerWallet, 
                                           mapBuyerToSeller, valBuyer, 
                                           valSeller, clearingPrice, temp, 
-                                          flagValBuyer, stack, pro_, pro_s, 
-                                          pro_r, offer, price_, pro_re, bid, 
-                                          price, pro_v, pro, other_, test, 
+                                          flagValBuyer, finalValBuyer, stack, 
+                                          pro_, checkBuyer, UnmappedSellers, 
+                                          pro_s, pro_r, offer, price_, pro_re, 
+                                          bid, price, pro_v, pro, other_, test, 
                                           other >>
 
 FinishRegisterProsumer(self) == /\ pc[self] = "FinishRegisterProsumer"
@@ -588,10 +708,12 @@ FinishRegisterProsumer(self) == /\ pc[self] = "FinishRegisterProsumer"
                                                 validBuyerWallet, 
                                                 mapBuyerToSeller, valBuyer, 
                                                 valSeller, clearingPrice, temp, 
-                                                flagValBuyer, pro_, pro_s, 
-                                                pro_r, offer, price_, pro_re, 
-                                                bid, price, pro_v, other_, 
-                                                test, other >>
+                                                flagValBuyer, finalValBuyer, 
+                                                pro_, checkBuyer, 
+                                                UnmappedSellers, pro_s, pro_r, 
+                                                offer, price_, pro_re, bid, 
+                                                price, pro_v, other_, test, 
+                                                other >>
 
 registerAccount(self) == RegisterProsumer(self)
                             \/ FinishRegisterProsumer(self)
@@ -609,9 +731,10 @@ register_buyer(self) == /\ pc[self] = "register_buyer"
                                         validSellers, validBuyerWallet, 
                                         mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, temp, flagValBuyer, 
-                                        pro_, pro_s, pro_r, offer, price_, 
-                                        pro_re, bid, price, pro_v, other_, 
-                                        test, other >>
+                                        finalValBuyer, pro_, checkBuyer, 
+                                        UnmappedSellers, pro_s, pro_r, offer, 
+                                        price_, pro_re, bid, price, pro_v, 
+                                        other_, test, other >>
 
 validate_buyer(self) == /\ pc[self] = "validate_buyer"
                         /\ /\ pro_v' = [pro_v EXCEPT ![self] = self]
@@ -626,9 +749,10 @@ validate_buyer(self) == /\ pc[self] = "validate_buyer"
                                         validSellers, validBuyerWallet, 
                                         mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, temp, flagValBuyer, 
-                                        pro_, pro_s, pro_r, offer, price_, 
-                                        pro_re, bid, price, pro, other_, test, 
-                                        other >>
+                                        finalValBuyer, pro_, checkBuyer, 
+                                        UnmappedSellers, pro_s, pro_r, offer, 
+                                        price_, pro_re, bid, price, pro, 
+                                        other_, test, other >>
 
 buy_energy(self) == /\ pc[self] = "buy_energy"
                     /\ /\ pro_re' = [pro_re EXCEPT ![self] = self]
@@ -646,10 +770,13 @@ buy_energy(self) == /\ pc[self] = "buy_energy"
                                     validBuyers, validSellers, 
                                     validBuyerWallet, mapBuyerToSeller, 
                                     valBuyer, valSeller, clearingPrice, temp, 
-                                    flagValBuyer, pro_, pro_s, pro_r, offer, 
-                                    price_, pro_v, pro, other_, test, other >>
+                                    flagValBuyer, finalValBuyer, pro_, 
+                                    checkBuyer, UnmappedSellers, pro_s, pro_r, 
+                                    offer, price_, pro_v, pro, other_, test, 
+                                    other >>
 
 Chill(self) == /\ pc[self] = "Chill"
+               /\ validBuyers = Buyers
                /\ IF self \in validBuyers
                      THEN /\ flagValBuyer' = [elem \in validBuyers |-> FALSE]
                      ELSE /\ TRUE
@@ -659,7 +786,8 @@ Chill(self) == /\ pc[self] = "Chill"
                                periodicEnergyBids, periodicEnergyOffers, 
                                validBuyers, validSellers, validBuyerWallet, 
                                mapBuyerToSeller, valBuyer, valSeller, 
-                               clearingPrice, temp, stack, pro_, pro_s, pro_r, 
+                               clearingPrice, temp, finalValBuyer, stack, pro_, 
+                               checkBuyer, UnmappedSellers, pro_s, pro_r, 
                                offer, price_, pro_re, bid, price, pro_v, pro, 
                                other_, test, other >>
 
@@ -668,16 +796,21 @@ matching1(self) == /\ pc[self] = "matching1"
                    /\ /\ pro_' = [pro_ EXCEPT ![self] = self]
                       /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "matching",
                                                                pc        |->  "settlement1",
+                                                               checkBuyer |->  checkBuyer[self],
+                                                               UnmappedSellers |->  UnmappedSellers[self],
                                                                pro_      |->  pro_[self] ] >>
                                                            \o stack[self]]
+                   /\ checkBuyer' = [checkBuyer EXCEPT ![self] = defaultInitValue]
+                   /\ UnmappedSellers' = [UnmappedSellers EXCEPT ![self] = {}]
                    /\ pc' = [pc EXCEPT ![self] = "matching_"]
                    /\ UNCHANGED << attack, bankBalance, registry, 
                                    periodicEnergyBids, periodicEnergyOffers, 
                                    validBuyers, validSellers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
-                                   clearingPrice, temp, flagValBuyer, pro_s, 
-                                   pro_r, offer, price_, pro_re, bid, price, 
-                                   pro_v, pro, other_, test, other >>
+                                   clearingPrice, temp, flagValBuyer, 
+                                   finalValBuyer, pro_s, pro_r, offer, price_, 
+                                   pro_re, bid, price, pro_v, pro, other_, 
+                                   test, other >>
 
 settlement1(self) == /\ pc[self] = "settlement1"
                      /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
@@ -691,9 +824,10 @@ settlement1(self) == /\ pc[self] = "settlement1"
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, pro_, pro_r, offer, price_, 
-                                     pro_re, bid, price, pro_v, pro, other_, 
-                                     test, other >>
+                                     flagValBuyer, finalValBuyer, pro_, 
+                                     checkBuyer, UnmappedSellers, pro_r, offer, 
+                                     price_, pro_re, bid, price, pro_v, pro, 
+                                     other_, test, other >>
 
 buyer(self) == register_buyer(self) \/ validate_buyer(self)
                   \/ buy_energy(self) \/ Chill(self) \/ matching1(self)
@@ -712,9 +846,10 @@ register_seller(self) == /\ pc[self] = "register_seller"
                                          validSellers, validBuyerWallet, 
                                          mapBuyerToSeller, valBuyer, valSeller, 
                                          clearingPrice, temp, flagValBuyer, 
-                                         pro_, pro_s, pro_r, offer, price_, 
-                                         pro_re, bid, price, pro_v, other_, 
-                                         test, other >>
+                                         finalValBuyer, pro_, checkBuyer, 
+                                         UnmappedSellers, pro_s, pro_r, offer, 
+                                         price_, pro_re, bid, price, pro_v, 
+                                         other_, test, other >>
 
 validate(self) == /\ pc[self] = "validate"
                   /\ /\ pro_v' = [pro_v EXCEPT ![self] = self]
@@ -727,9 +862,10 @@ validate(self) == /\ pc[self] = "validate"
                                   periodicEnergyBids, periodicEnergyOffers, 
                                   validBuyers, validSellers, validBuyerWallet, 
                                   mapBuyerToSeller, valBuyer, valSeller, 
-                                  clearingPrice, temp, flagValBuyer, pro_, 
-                                  pro_s, pro_r, offer, price_, pro_re, bid, 
-                                  price, pro, other_, test, other >>
+                                  clearingPrice, temp, flagValBuyer, 
+                                  finalValBuyer, pro_, checkBuyer, 
+                                  UnmappedSellers, pro_s, pro_r, offer, price_, 
+                                  pro_re, bid, price, pro, other_, test, other >>
 
 sell_energy(self) == /\ pc[self] = "sell_energy"
                      /\ /\ pro_r' = [pro_r EXCEPT ![self] = self]
@@ -747,19 +883,30 @@ sell_energy(self) == /\ pc[self] = "sell_energy"
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, pro_, pro_s, pro_re, bid, 
-                                     price, pro_v, pro, other_, test, other >>
+                                     flagValBuyer, finalValBuyer, pro_, 
+                                     checkBuyer, UnmappedSellers, pro_s, 
+                                     pro_re, bid, price, pro_v, pro, other_, 
+                                     test, other >>
 
 matching2(self) == /\ pc[self] = "matching2"
-                   /\ TRUE
-                   /\ pc' = [pc EXCEPT ![self] = "settlement2"]
+                   /\ /\ pro_' = [pro_ EXCEPT ![self] = self]
+                      /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "matching",
+                                                               pc        |->  "settlement2",
+                                                               checkBuyer |->  checkBuyer[self],
+                                                               UnmappedSellers |->  UnmappedSellers[self],
+                                                               pro_      |->  pro_[self] ] >>
+                                                           \o stack[self]]
+                   /\ checkBuyer' = [checkBuyer EXCEPT ![self] = defaultInitValue]
+                   /\ UnmappedSellers' = [UnmappedSellers EXCEPT ![self] = {}]
+                   /\ pc' = [pc EXCEPT ![self] = "matching_"]
                    /\ UNCHANGED << attack, bankBalance, registry, 
                                    periodicEnergyBids, periodicEnergyOffers, 
                                    validBuyers, validSellers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
-                                   clearingPrice, temp, flagValBuyer, stack, 
-                                   pro_, pro_s, pro_r, offer, price_, pro_re, 
-                                   bid, price, pro_v, pro, other_, test, other >>
+                                   clearingPrice, temp, flagValBuyer, 
+                                   finalValBuyer, pro_s, pro_r, offer, price_, 
+                                   pro_re, bid, price, pro_v, pro, other_, 
+                                   test, other >>
 
 settlement2(self) == /\ pc[self] = "settlement2"
                      /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
@@ -773,9 +920,10 @@ settlement2(self) == /\ pc[self] = "settlement2"
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, pro_, pro_r, offer, price_, 
-                                     pro_re, bid, price, pro_v, pro, other_, 
-                                     test, other >>
+                                     flagValBuyer, finalValBuyer, pro_, 
+                                     checkBuyer, UnmappedSellers, pro_r, offer, 
+                                     price_, pro_re, bid, price, pro_v, pro, 
+                                     other_, test, other >>
 
 seller(self) == register_seller(self) \/ validate(self)
                    \/ sell_energy(self) \/ matching2(self)
@@ -805,6 +953,7 @@ Spec == /\ Init /\ [][Next]_vars
                                  /\ WF_vars(registerAccount(self))
                                  /\ WF_vars(validateAccount(self))
                                  /\ WF_vars(registerMarketSellOrder(self))
+                                 /\ WF_vars(matching(self))
                                  /\ WF_vars(settlement(self))
 
 Termination == <>(\A self \in ProcSet: pc[self] = "Done")
@@ -813,5 +962,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sat Feb 03 09:30:07 GMT 2024 by naufa
+\* Last modified Tue Feb 13 22:40:22 GMT 2024 by naufa
 \* Created Fri Jan 05 10:01:04 GMT 2024 by naufa
