@@ -47,7 +47,7 @@ variables
   
   temp = 0, flagValBuyer = [b \in Buyers |-> FALSE],
   
-  finalValBuyer = [b \in Buyers |-> 0], set1 = FALSE, set2=FALSE;
+  finalValBuyer = [b \in Buyers |-> 0], flagBuyers = FALSE, flagSellers=FALSE;
 
 (* Invariant Proposals
 (1) Prevent Attacks
@@ -214,14 +214,12 @@ end procedure;
    the transfer of commodities is shown via the change in the PeriodicEnergyBids & PeriodicEnergyOffers 
 *)
 procedure settlement(pro)
-variables hourChosen = 1, sellerAssosciated = 4;
+variables hourChosen = 1, sellerAssosciated = 4, npc = 0;
 
 begin
   awaitForSellersAndBuyers:
-  if pro = 1 then set1 := TRUE; end if;
-  if pro = 4 then set2 := TRUE; end if;
-  await set1 = TRUE;
-  await set2 = TRUE;
+       
+  await flagBuyers = TRUE /\ flagSellers = TRUE;
   
   settlement:
   if pro \in DOMAIN mapBuyerToSeller then
@@ -335,7 +333,12 @@ begin
     await validBuyers /= {};
     call matching(self);
   settlement1:
+  if self \in validBuyers then
+    flagBuyers := TRUE;
+    loopJO2:
+    while ~flagSellers do skip; end while;
     call settlement(self);
+  end if;
  end process;
  
 fair process seller \in Sellers
@@ -353,26 +356,31 @@ begin
     call matching(self);
 \*      skip;
   settlement2:
+  if self \in validSellers then
+    flagSellers := TRUE;
+    loopJO1:
+    while ~flagBuyers do skip; end while;
 \*     await validSellers = Sellers;
     call settlement(self);
+   end if;
  end process;
 
 end algorithm*)
-\* BEGIN TRANSLATION (chksum(pcal) = "7b3ab13a" /\ chksum(tla) = "adb7aca9")
+\* BEGIN TRANSLATION (chksum(pcal) = "52f5c9b8" /\ chksum(tla) = "96a43d44")
 \* Label matching of procedure matching at line 140 col 5 changed to matching_
-\* Label settlement of procedure settlement at line 227 col 3 changed to settlement_
-\* Process variable other of process buyer at line 319 col 3 changed to other_
-\* Procedure variable price of procedure registerMarketSellOrder at line 252 col 11 changed to price_
+\* Label settlement of procedure settlement at line 225 col 3 changed to settlement_
+\* Process variable other of process buyer at line 317 col 3 changed to other_
+\* Procedure variable price of procedure registerMarketSellOrder at line 250 col 11 changed to price_
 \* Parameter pro of procedure matching at line 135 col 20 changed to pro_
 \* Parameter pro of procedure settlement at line 216 col 22 changed to pro_s
-\* Parameter pro of procedure registerMarketSellOrder at line 250 col 36 changed to pro_r
-\* Parameter pro of procedure registerMarketBuyOrder at line 270 col 35 changed to pro_re
-\* Parameter pro of procedure validateAccount at line 292 col 27 changed to pro_v
+\* Parameter pro of procedure registerMarketSellOrder at line 248 col 36 changed to pro_r
+\* Parameter pro of procedure registerMarketBuyOrder at line 268 col 35 changed to pro_re
+\* Parameter pro of procedure validateAccount at line 290 col 27 changed to pro_v
 CONSTANT defaultInitValue
 VARIABLES attack, bankBalance, registry, periodicEnergyBids, 
           periodicEnergyOffers, validBuyers, validSellers, validBuyerWallet, 
           mapBuyerToSeller, valBuyer, valSeller, clearingPrice, temp, 
-          flagValBuyer, finalValBuyer, set1, set2, pc, stack
+          flagValBuyer, finalValBuyer, flagBuyers, flagSellers, pc, stack
 
 (* define statement *)
 SafeWithdrawal ==
@@ -393,16 +401,16 @@ SellersValidated ==
 /\ \A x \in validSellers : x \in Sellers
 
 VARIABLES pro_, checkBuyer, UnmappedSellers, pro_s, hourChosen, 
-          sellerAssosciated, pro_r, offer, price_, pro_re, bid, price, pro_v, 
-          pro, other_, test, other
+          sellerAssosciated, npc, pro_r, offer, price_, pro_re, bid, price, 
+          pro_v, pro, other_, test, other
 
 vars == << attack, bankBalance, registry, periodicEnergyBids, 
            periodicEnergyOffers, validBuyers, validSellers, validBuyerWallet, 
            mapBuyerToSeller, valBuyer, valSeller, clearingPrice, temp, 
-           flagValBuyer, finalValBuyer, set1, set2, pc, stack, pro_, 
-           checkBuyer, UnmappedSellers, pro_s, hourChosen, sellerAssosciated, 
-           pro_r, offer, price_, pro_re, bid, price, pro_v, pro, other_, test, 
-           other >>
+           flagValBuyer, finalValBuyer, flagBuyers, flagSellers, pc, stack, 
+           pro_, checkBuyer, UnmappedSellers, pro_s, hourChosen, 
+           sellerAssosciated, npc, pro_r, offer, price_, pro_re, bid, price, 
+           pro_v, pro, other_, test, other >>
 
 ProcSet == (Buyers) \cup (Sellers)
 
@@ -422,8 +430,8 @@ Init == (* Global variables *)
         /\ temp = 0
         /\ flagValBuyer = [b \in Buyers |-> FALSE]
         /\ finalValBuyer = [b \in Buyers |-> 0]
-        /\ set1 = FALSE
-        /\ set2 = FALSE
+        /\ flagBuyers = FALSE
+        /\ flagSellers = FALSE
         (* Procedure matching *)
         /\ pro_ = [ self \in ProcSet |-> defaultInitValue]
         /\ checkBuyer = [ self \in ProcSet |-> defaultInitValue]
@@ -432,6 +440,7 @@ Init == (* Global variables *)
         /\ pro_s = [ self \in ProcSet |-> defaultInitValue]
         /\ hourChosen = [ self \in ProcSet |-> 1]
         /\ sellerAssosciated = [ self \in ProcSet |-> 4]
+        /\ npc = [ self \in ProcSet |-> 0]
         (* Procedure registerMarketSellOrder *)
         /\ pro_r = [ self \in ProcSet |-> defaultInitValue]
         /\ offer = [ self \in ProcSet |-> 0]
@@ -465,11 +474,11 @@ matching_(self) == /\ pc[self] = "matching_"
                                    validBuyers, validSellers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, temp, flagValBuyer, 
-                                   finalValBuyer, set1, set2, stack, pro_, 
-                                   checkBuyer, UnmappedSellers, pro_s, 
-                                   hourChosen, sellerAssosciated, pro_r, offer, 
-                                   price_, pro_re, bid, price, pro_v, pro, 
-                                   other_, test, other >>
+                                   finalValBuyer, flagBuyers, flagSellers, 
+                                   stack, pro_, checkBuyer, UnmappedSellers, 
+                                   pro_s, hourChosen, sellerAssosciated, npc, 
+                                   pro_r, offer, price_, pro_re, bid, price, 
+                                   pro_v, pro, other_, test, other >>
 
 sorting(self) == /\ pc[self] = "sorting"
                  /\ IF pro_[self] \in validBuyers
@@ -482,11 +491,12 @@ sorting(self) == /\ pc[self] = "sorting"
                                  periodicEnergyOffers, validBuyers, 
                                  validSellers, validBuyerWallet, 
                                  mapBuyerToSeller, valBuyer, valSeller, temp, 
-                                 flagValBuyer, finalValBuyer, set1, set2, 
-                                 stack, pro_, checkBuyer, UnmappedSellers, 
-                                 pro_s, hourChosen, sellerAssosciated, pro_r, 
-                                 offer, price_, pro_re, bid, price, pro_v, pro, 
-                                 other_, test, other >>
+                                 flagValBuyer, finalValBuyer, flagBuyers, 
+                                 flagSellers, stack, pro_, checkBuyer, 
+                                 UnmappedSellers, pro_s, hourChosen, 
+                                 sellerAssosciated, npc, pro_r, offer, price_, 
+                                 pro_re, bid, price, pro_v, pro, other_, test, 
+                                 other >>
 
 selectSeller(self) == /\ pc[self] = "selectSeller"
                       /\ UnmappedSellers' = [UnmappedSellers EXCEPT ![self] = validSellers]
@@ -496,11 +506,11 @@ selectSeller(self) == /\ pc[self] = "selectSeller"
                                       validBuyers, validSellers, 
                                       validBuyerWallet, mapBuyerToSeller, 
                                       valBuyer, valSeller, clearingPrice, temp, 
-                                      flagValBuyer, finalValBuyer, set1, set2, 
-                                      stack, pro_, checkBuyer, pro_s, 
-                                      hourChosen, sellerAssosciated, pro_r, 
-                                      offer, price_, pro_re, bid, price, pro_v, 
-                                      pro, other_, test, other >>
+                                      flagValBuyer, finalValBuyer, flagBuyers, 
+                                      flagSellers, stack, pro_, checkBuyer, 
+                                      pro_s, hourChosen, sellerAssosciated, 
+                                      npc, pro_r, offer, price_, pro_re, bid, 
+                                      price, pro_v, pro, other_, test, other >>
 
 selectBuyer(self) == /\ pc[self] = "selectBuyer"
                      /\ IF validBuyers /= {}
@@ -521,11 +531,11 @@ selectBuyer(self) == /\ pc[self] = "selectBuyer"
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
                                      validBuyerWallet, valBuyer, valSeller, 
-                                     clearingPrice, temp, finalValBuyer, set1, 
-                                     set2, stack, pro_, pro_s, hourChosen, 
-                                     sellerAssosciated, pro_r, offer, price_, 
-                                     pro_re, bid, price, pro_v, pro, other_, 
-                                     test, other >>
+                                     clearingPrice, temp, finalValBuyer, 
+                                     flagBuyers, flagSellers, stack, pro_, 
+                                     pro_s, hourChosen, sellerAssosciated, npc, 
+                                     pro_r, offer, price_, pro_re, bid, price, 
+                                     pro_v, pro, other_, test, other >>
 
 criticalSection(self) == /\ pc[self] = "criticalSection"
                          /\ validBuyerWallet' = [validBuyerWallet EXCEPT ![checkBuyer[self]] = bankBalance - AMOUNT]
@@ -537,11 +547,12 @@ criticalSection(self) == /\ pc[self] = "criticalSection"
                                          periodicEnergyOffers, validBuyers, 
                                          validSellers, mapBuyerToSeller, 
                                          valBuyer, valSeller, clearingPrice, 
-                                         temp, set1, set2, stack, pro_, 
-                                         checkBuyer, UnmappedSellers, pro_s, 
-                                         hourChosen, sellerAssosciated, pro_r, 
-                                         offer, price_, pro_re, bid, price, 
-                                         pro_v, pro, other_, test, other >>
+                                         temp, flagBuyers, flagSellers, stack, 
+                                         pro_, checkBuyer, UnmappedSellers, 
+                                         pro_s, hourChosen, sellerAssosciated, 
+                                         npc, pro_r, offer, price_, pro_re, 
+                                         bid, price, pro_v, pro, other_, test, 
+                                         other >>
 
 selectBuyer2(self) == /\ pc[self] = "selectBuyer2"
                       /\ \E b \in validBuyers:
@@ -553,12 +564,12 @@ selectBuyer2(self) == /\ pc[self] = "selectBuyer2"
                                       periodicEnergyBids, periodicEnergyOffers, 
                                       validBuyers, validSellers, 
                                       validBuyerWallet, valBuyer, valSeller, 
-                                      clearingPrice, temp, finalValBuyer, set1, 
-                                      set2, stack, pro_, checkBuyer, 
-                                      UnmappedSellers, pro_s, hourChosen, 
-                                      sellerAssosciated, pro_r, offer, price_, 
-                                      pro_re, bid, price, pro_v, pro, other_, 
-                                      test, other >>
+                                      clearingPrice, temp, finalValBuyer, 
+                                      flagBuyers, flagSellers, stack, pro_, 
+                                      checkBuyer, UnmappedSellers, pro_s, 
+                                      hourChosen, sellerAssosciated, npc, 
+                                      pro_r, offer, price_, pro_re, bid, price, 
+                                      pro_v, pro, other_, test, other >>
 
 criticalSection2(self) == /\ pc[self] = "criticalSection2"
                           /\ validBuyerWallet' = [validBuyerWallet EXCEPT ![checkBuyer[self]] = bankBalance - AMOUNT]
@@ -569,10 +580,10 @@ criticalSection2(self) == /\ pc[self] = "criticalSection2"
                                           periodicEnergyOffers, validBuyers, 
                                           validSellers, mapBuyerToSeller, 
                                           valBuyer, valSeller, clearingPrice, 
-                                          temp, flagValBuyer, set1, set2, 
-                                          stack, pro_, checkBuyer, 
+                                          temp, flagValBuyer, flagBuyers, 
+                                          flagSellers, stack, pro_, checkBuyer, 
                                           UnmappedSellers, pro_s, hourChosen, 
-                                          sellerAssosciated, pro_r, offer, 
+                                          sellerAssosciated, npc, pro_r, offer, 
                                           price_, pro_re, bid, price, pro_v, 
                                           pro, other_, test, other >>
 
@@ -587,10 +598,11 @@ returnMatch(self) == /\ pc[self] = "returnMatch"
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, finalValBuyer, set1, set2, 
-                                     pro_s, hourChosen, sellerAssosciated, 
-                                     pro_r, offer, price_, pro_re, bid, price, 
-                                     pro_v, pro, other_, test, other >>
+                                     flagValBuyer, finalValBuyer, flagBuyers, 
+                                     flagSellers, pro_s, hourChosen, 
+                                     sellerAssosciated, npc, pro_r, offer, 
+                                     price_, pro_re, bid, price, pro_v, pro, 
+                                     other_, test, other >>
 
 matching(self) == matching_(self) \/ sorting(self) \/ selectSeller(self)
                      \/ selectBuyer(self) \/ criticalSection(self)
@@ -598,17 +610,7 @@ matching(self) == matching_(self) \/ sorting(self) \/ selectSeller(self)
                      \/ returnMatch(self)
 
 awaitForSellersAndBuyers(self) == /\ pc[self] = "awaitForSellersAndBuyers"
-                                  /\ IF pro_s[self] = 1
-                                        THEN /\ PrintT(("BENAR"))
-                                             /\ set1' = TRUE
-                                        ELSE /\ TRUE
-                                             /\ set1' = set1
-                                  /\ IF pro_s[self] = 4
-                                        THEN /\ set2' = TRUE
-                                        ELSE /\ TRUE
-                                             /\ set2' = set2
-                                  /\ set1' = TRUE
-                                  /\ set2' = TRUE
+                                  /\ flagBuyers = TRUE /\ flagSellers = TRUE
                                   /\ pc' = [pc EXCEPT ![self] = "settlement_"]
                                   /\ UNCHANGED << attack, bankBalance, 
                                                   registry, periodicEnergyBids, 
@@ -618,13 +620,14 @@ awaitForSellersAndBuyers(self) == /\ pc[self] = "awaitForSellersAndBuyers"
                                                   mapBuyerToSeller, valBuyer, 
                                                   valSeller, clearingPrice, 
                                                   temp, flagValBuyer, 
-                                                  finalValBuyer, stack, pro_, 
+                                                  finalValBuyer, flagBuyers, 
+                                                  flagSellers, stack, pro_, 
                                                   checkBuyer, UnmappedSellers, 
                                                   pro_s, hourChosen, 
-                                                  sellerAssosciated, pro_r, 
-                                                  offer, price_, pro_re, bid, 
-                                                  price, pro_v, pro, other_, 
-                                                  test, other >>
+                                                  sellerAssosciated, npc, 
+                                                  pro_r, offer, price_, pro_re, 
+                                                  bid, price, pro_v, pro, 
+                                                  other_, test, other >>
 
 settlement_(self) == /\ pc[self] = "settlement_"
                      /\ IF pro_s[self] \in DOMAIN mapBuyerToSeller
@@ -645,15 +648,17 @@ settlement_(self) == /\ pc[self] = "settlement_"
                      /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                      /\ hourChosen' = [hourChosen EXCEPT ![self] = Head(stack[self]).hourChosen]
                      /\ sellerAssosciated' = [sellerAssosciated EXCEPT ![self] = Head(stack[self]).sellerAssosciated]
+                     /\ npc' = [npc EXCEPT ![self] = Head(stack[self]).npc]
                      /\ pro_s' = [pro_s EXCEPT ![self] = Head(stack[self]).pro_s]
                      /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, finalValBuyer, set1, set2, 
-                                     pro_, checkBuyer, UnmappedSellers, pro_r, 
-                                     offer, price_, pro_re, bid, price, pro_v, 
-                                     pro, other_, test, other >>
+                                     flagValBuyer, finalValBuyer, flagBuyers, 
+                                     flagSellers, pro_, checkBuyer, 
+                                     UnmappedSellers, pro_r, offer, price_, 
+                                     pro_re, bid, price, pro_v, pro, other_, 
+                                     test, other >>
 
 settlement(self) == awaitForSellersAndBuyers(self) \/ settlement_(self)
 
@@ -672,11 +677,11 @@ sellOrder(self) == /\ pc[self] = "sellOrder"
                                    validBuyers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, temp, flagValBuyer, 
-                                   finalValBuyer, set1, set2, stack, pro_, 
-                                   checkBuyer, UnmappedSellers, pro_s, 
-                                   hourChosen, sellerAssosciated, pro_r, 
-                                   pro_re, bid, price, pro_v, pro, other_, 
-                                   test, other >>
+                                   finalValBuyer, flagBuyers, flagSellers, 
+                                   stack, pro_, checkBuyer, UnmappedSellers, 
+                                   pro_s, hourChosen, sellerAssosciated, npc, 
+                                   pro_r, pro_re, bid, price, pro_v, pro, 
+                                   other_, test, other >>
 
 FinishSellOrder(self) == /\ pc[self] = "FinishSellOrder"
                          /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -690,10 +695,11 @@ FinishSellOrder(self) == /\ pc[self] = "FinishSellOrder"
                                          validSellers, validBuyerWallet, 
                                          mapBuyerToSeller, valBuyer, valSeller, 
                                          clearingPrice, temp, flagValBuyer, 
-                                         finalValBuyer, set1, set2, pro_, 
-                                         checkBuyer, UnmappedSellers, pro_s, 
-                                         hourChosen, sellerAssosciated, pro_re, 
-                                         bid, price, pro_v, pro, other_, test, 
+                                         finalValBuyer, flagBuyers, 
+                                         flagSellers, pro_, checkBuyer, 
+                                         UnmappedSellers, pro_s, hourChosen, 
+                                         sellerAssosciated, npc, pro_re, bid, 
+                                         price, pro_v, pro, other_, test, 
                                          other >>
 
 registerMarketSellOrder(self) == sellOrder(self) \/ FinishSellOrder(self)
@@ -713,11 +719,11 @@ BuyOrder(self) == /\ pc[self] = "BuyOrder"
                                   periodicEnergyBids, periodicEnergyOffers, 
                                   validSellers, mapBuyerToSeller, valBuyer, 
                                   valSeller, clearingPrice, temp, flagValBuyer, 
-                                  finalValBuyer, set1, set2, stack, pro_, 
-                                  checkBuyer, UnmappedSellers, pro_s, 
-                                  hourChosen, sellerAssosciated, pro_r, offer, 
-                                  price_, pro_re, pro_v, pro, other_, test, 
-                                  other >>
+                                  finalValBuyer, flagBuyers, flagSellers, 
+                                  stack, pro_, checkBuyer, UnmappedSellers, 
+                                  pro_s, hourChosen, sellerAssosciated, npc, 
+                                  pro_r, offer, price_, pro_re, pro_v, pro, 
+                                  other_, test, other >>
 
 FinishBuyOrder(self) == /\ pc[self] = "FinishBuyOrder"
                         /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -731,11 +737,11 @@ FinishBuyOrder(self) == /\ pc[self] = "FinishBuyOrder"
                                         validSellers, validBuyerWallet, 
                                         mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, temp, flagValBuyer, 
-                                        finalValBuyer, set1, set2, pro_, 
-                                        checkBuyer, UnmappedSellers, pro_s, 
-                                        hourChosen, sellerAssosciated, pro_r, 
-                                        offer, price_, pro_v, pro, other_, 
-                                        test, other >>
+                                        finalValBuyer, flagBuyers, flagSellers, 
+                                        pro_, checkBuyer, UnmappedSellers, 
+                                        pro_s, hourChosen, sellerAssosciated, 
+                                        npc, pro_r, offer, price_, pro_v, pro, 
+                                        other_, test, other >>
 
 registerMarketBuyOrder(self) == BuyOrder(self) \/ FinishBuyOrder(self)
 
@@ -750,12 +756,12 @@ ValidateProsumer(self) == /\ pc[self] = "ValidateProsumer"
                                           validSellers, validBuyerWallet, 
                                           mapBuyerToSeller, valBuyer, 
                                           valSeller, clearingPrice, temp, 
-                                          flagValBuyer, finalValBuyer, set1, 
-                                          set2, pro_, checkBuyer, 
-                                          UnmappedSellers, pro_s, hourChosen, 
-                                          sellerAssosciated, pro_r, offer, 
-                                          price_, pro_re, bid, price, pro, 
-                                          other_, test, other >>
+                                          flagValBuyer, finalValBuyer, 
+                                          flagBuyers, flagSellers, pro_, 
+                                          checkBuyer, UnmappedSellers, pro_s, 
+                                          hourChosen, sellerAssosciated, npc, 
+                                          pro_r, offer, price_, pro_re, bid, 
+                                          price, pro, other_, test, other >>
 
 validateAccount(self) == ValidateProsumer(self)
 
@@ -768,12 +774,13 @@ RegisterProsumer(self) == /\ pc[self] = "RegisterProsumer"
                                           validSellers, validBuyerWallet, 
                                           mapBuyerToSeller, valBuyer, 
                                           valSeller, clearingPrice, temp, 
-                                          flagValBuyer, finalValBuyer, set1, 
-                                          set2, stack, pro_, checkBuyer, 
-                                          UnmappedSellers, pro_s, hourChosen, 
-                                          sellerAssosciated, pro_r, offer, 
-                                          price_, pro_re, bid, price, pro_v, 
-                                          pro, other_, test, other >>
+                                          flagValBuyer, finalValBuyer, 
+                                          flagBuyers, flagSellers, stack, pro_, 
+                                          checkBuyer, UnmappedSellers, pro_s, 
+                                          hourChosen, sellerAssosciated, npc, 
+                                          pro_r, offer, price_, pro_re, bid, 
+                                          price, pro_v, pro, other_, test, 
+                                          other >>
 
 FinishRegisterProsumer(self) == /\ pc[self] = "FinishRegisterProsumer"
                                 /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -787,12 +794,13 @@ FinishRegisterProsumer(self) == /\ pc[self] = "FinishRegisterProsumer"
                                                 mapBuyerToSeller, valBuyer, 
                                                 valSeller, clearingPrice, temp, 
                                                 flagValBuyer, finalValBuyer, 
-                                                set1, set2, pro_, checkBuyer, 
-                                                UnmappedSellers, pro_s, 
-                                                hourChosen, sellerAssosciated, 
-                                                pro_r, offer, price_, pro_re, 
-                                                bid, price, pro_v, other_, 
-                                                test, other >>
+                                                flagBuyers, flagSellers, pro_, 
+                                                checkBuyer, UnmappedSellers, 
+                                                pro_s, hourChosen, 
+                                                sellerAssosciated, npc, pro_r, 
+                                                offer, price_, pro_re, bid, 
+                                                price, pro_v, other_, test, 
+                                                other >>
 
 registerAccount(self) == RegisterProsumer(self)
                             \/ FinishRegisterProsumer(self)
@@ -810,11 +818,11 @@ register_buyer(self) == /\ pc[self] = "register_buyer"
                                         validSellers, validBuyerWallet, 
                                         mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, temp, flagValBuyer, 
-                                        finalValBuyer, set1, set2, pro_, 
-                                        checkBuyer, UnmappedSellers, pro_s, 
-                                        hourChosen, sellerAssosciated, pro_r, 
-                                        offer, price_, pro_re, bid, price, 
-                                        pro_v, other_, test, other >>
+                                        finalValBuyer, flagBuyers, flagSellers, 
+                                        pro_, checkBuyer, UnmappedSellers, 
+                                        pro_s, hourChosen, sellerAssosciated, 
+                                        npc, pro_r, offer, price_, pro_re, bid, 
+                                        price, pro_v, other_, test, other >>
 
 validate_buyer(self) == /\ pc[self] = "validate_buyer"
                         /\ /\ pro_v' = [pro_v EXCEPT ![self] = self]
@@ -829,11 +837,11 @@ validate_buyer(self) == /\ pc[self] = "validate_buyer"
                                         validSellers, validBuyerWallet, 
                                         mapBuyerToSeller, valBuyer, valSeller, 
                                         clearingPrice, temp, flagValBuyer, 
-                                        finalValBuyer, set1, set2, pro_, 
-                                        checkBuyer, UnmappedSellers, pro_s, 
-                                        hourChosen, sellerAssosciated, pro_r, 
-                                        offer, price_, pro_re, bid, price, pro, 
-                                        other_, test, other >>
+                                        finalValBuyer, flagBuyers, flagSellers, 
+                                        pro_, checkBuyer, UnmappedSellers, 
+                                        pro_s, hourChosen, sellerAssosciated, 
+                                        npc, pro_r, offer, price_, pro_re, bid, 
+                                        price, pro, other_, test, other >>
 
 buy_energy(self) == /\ pc[self] = "buy_energy"
                     /\ /\ pro_re' = [pro_re EXCEPT ![self] = self]
@@ -851,11 +859,11 @@ buy_energy(self) == /\ pc[self] = "buy_energy"
                                     validBuyers, validSellers, 
                                     validBuyerWallet, mapBuyerToSeller, 
                                     valBuyer, valSeller, clearingPrice, temp, 
-                                    flagValBuyer, finalValBuyer, set1, set2, 
-                                    pro_, checkBuyer, UnmappedSellers, pro_s, 
-                                    hourChosen, sellerAssosciated, pro_r, 
-                                    offer, price_, pro_v, pro, other_, test, 
-                                    other >>
+                                    flagValBuyer, finalValBuyer, flagBuyers, 
+                                    flagSellers, pro_, checkBuyer, 
+                                    UnmappedSellers, pro_s, hourChosen, 
+                                    sellerAssosciated, npc, pro_r, offer, 
+                                    price_, pro_v, pro, other_, test, other >>
 
 Chill(self) == /\ pc[self] = "Chill"
                /\ validBuyers = Buyers
@@ -868,11 +876,12 @@ Chill(self) == /\ pc[self] = "Chill"
                                periodicEnergyBids, periodicEnergyOffers, 
                                validBuyers, validSellers, validBuyerWallet, 
                                mapBuyerToSeller, valBuyer, valSeller, 
-                               clearingPrice, temp, finalValBuyer, set1, set2, 
-                               stack, pro_, checkBuyer, UnmappedSellers, pro_s, 
-                               hourChosen, sellerAssosciated, pro_r, offer, 
-                               price_, pro_re, bid, price, pro_v, pro, other_, 
-                               test, other >>
+                               clearingPrice, temp, finalValBuyer, flagBuyers, 
+                               flagSellers, stack, pro_, checkBuyer, 
+                               UnmappedSellers, pro_s, hourChosen, 
+                               sellerAssosciated, npc, pro_r, offer, price_, 
+                               pro_re, bid, price, pro_v, pro, other_, test, 
+                               other >>
 
 matching1(self) == /\ pc[self] = "matching1"
                    /\ validBuyers /= {}
@@ -891,35 +900,59 @@ matching1(self) == /\ pc[self] = "matching1"
                                    validBuyers, validSellers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, temp, flagValBuyer, 
-                                   finalValBuyer, set1, set2, pro_s, 
-                                   hourChosen, sellerAssosciated, pro_r, offer, 
-                                   price_, pro_re, bid, price, pro_v, pro, 
-                                   other_, test, other >>
+                                   finalValBuyer, flagBuyers, flagSellers, 
+                                   pro_s, hourChosen, sellerAssosciated, npc, 
+                                   pro_r, offer, price_, pro_re, bid, price, 
+                                   pro_v, pro, other_, test, other >>
 
 settlement1(self) == /\ pc[self] = "settlement1"
-                     /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
-                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "settlement",
-                                                                 pc        |->  "Done",
-                                                                 hourChosen |->  hourChosen[self],
-                                                                 sellerAssosciated |->  sellerAssosciated[self],
-                                                                 pro_s     |->  pro_s[self] ] >>
-                                                             \o stack[self]]
-                     /\ hourChosen' = [hourChosen EXCEPT ![self] = 1]
-                     /\ sellerAssosciated' = [sellerAssosciated EXCEPT ![self] = 4]
-                     /\ pc' = [pc EXCEPT ![self] = "awaitForSellersAndBuyers"]
+                     /\ IF self \in validBuyers
+                           THEN /\ flagBuyers' = TRUE
+                                /\ pc' = [pc EXCEPT ![self] = "loopJO2"]
+                           ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
+                                /\ UNCHANGED flagBuyers
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, finalValBuyer, set1, set2, 
-                                     pro_, checkBuyer, UnmappedSellers, pro_r, 
-                                     offer, price_, pro_re, bid, price, pro_v, 
-                                     pro, other_, test, other >>
+                                     flagValBuyer, finalValBuyer, flagSellers, 
+                                     stack, pro_, checkBuyer, UnmappedSellers, 
+                                     pro_s, hourChosen, sellerAssosciated, npc, 
+                                     pro_r, offer, price_, pro_re, bid, price, 
+                                     pro_v, pro, other_, test, other >>
+
+loopJO2(self) == /\ pc[self] = "loopJO2"
+                 /\ IF ~flagSellers
+                       THEN /\ TRUE
+                            /\ pc' = [pc EXCEPT ![self] = "loopJO2"]
+                            /\ UNCHANGED << stack, pro_s, hourChosen, 
+                                            sellerAssosciated, npc >>
+                       ELSE /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
+                               /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "settlement",
+                                                                        pc        |->  "Done",
+                                                                        hourChosen |->  hourChosen[self],
+                                                                        sellerAssosciated |->  sellerAssosciated[self],
+                                                                        npc       |->  npc[self],
+                                                                        pro_s     |->  pro_s[self] ] >>
+                                                                    \o stack[self]]
+                            /\ hourChosen' = [hourChosen EXCEPT ![self] = 1]
+                            /\ sellerAssosciated' = [sellerAssosciated EXCEPT ![self] = 4]
+                            /\ npc' = [npc EXCEPT ![self] = 0]
+                            /\ pc' = [pc EXCEPT ![self] = "awaitForSellersAndBuyers"]
+                 /\ UNCHANGED << attack, bankBalance, registry, 
+                                 periodicEnergyBids, periodicEnergyOffers, 
+                                 validBuyers, validSellers, validBuyerWallet, 
+                                 mapBuyerToSeller, valBuyer, valSeller, 
+                                 clearingPrice, temp, flagValBuyer, 
+                                 finalValBuyer, flagBuyers, flagSellers, pro_, 
+                                 checkBuyer, UnmappedSellers, pro_r, offer, 
+                                 price_, pro_re, bid, price, pro_v, pro, 
+                                 other_, test, other >>
 
 buyer(self) == register_buyer(self) \/ validate_buyer(self)
                   \/ buy_energy(self) \/ Chill(self) \/ matching1(self)
-                  \/ settlement1(self)
+                  \/ settlement1(self) \/ loopJO2(self)
 
 register_seller(self) == /\ pc[self] = "register_seller"
                          /\ /\ pro' = [pro EXCEPT ![self] = self]
@@ -934,11 +967,12 @@ register_seller(self) == /\ pc[self] = "register_seller"
                                          validSellers, validBuyerWallet, 
                                          mapBuyerToSeller, valBuyer, valSeller, 
                                          clearingPrice, temp, flagValBuyer, 
-                                         finalValBuyer, set1, set2, pro_, 
-                                         checkBuyer, UnmappedSellers, pro_s, 
-                                         hourChosen, sellerAssosciated, pro_r, 
-                                         offer, price_, pro_re, bid, price, 
-                                         pro_v, other_, test, other >>
+                                         finalValBuyer, flagBuyers, 
+                                         flagSellers, pro_, checkBuyer, 
+                                         UnmappedSellers, pro_s, hourChosen, 
+                                         sellerAssosciated, npc, pro_r, offer, 
+                                         price_, pro_re, bid, price, pro_v, 
+                                         other_, test, other >>
 
 validate(self) == /\ pc[self] = "validate"
                   /\ /\ pro_v' = [pro_v EXCEPT ![self] = self]
@@ -952,10 +986,11 @@ validate(self) == /\ pc[self] = "validate"
                                   validBuyers, validSellers, validBuyerWallet, 
                                   mapBuyerToSeller, valBuyer, valSeller, 
                                   clearingPrice, temp, flagValBuyer, 
-                                  finalValBuyer, set1, set2, pro_, checkBuyer, 
-                                  UnmappedSellers, pro_s, hourChosen, 
-                                  sellerAssosciated, pro_r, offer, price_, 
-                                  pro_re, bid, price, pro, other_, test, other >>
+                                  finalValBuyer, flagBuyers, flagSellers, pro_, 
+                                  checkBuyer, UnmappedSellers, pro_s, 
+                                  hourChosen, sellerAssosciated, npc, pro_r, 
+                                  offer, price_, pro_re, bid, price, pro, 
+                                  other_, test, other >>
 
 sell_energy(self) == /\ pc[self] = "sell_energy"
                      /\ /\ pro_r' = [pro_r EXCEPT ![self] = self]
@@ -973,11 +1008,11 @@ sell_energy(self) == /\ pc[self] = "sell_energy"
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, finalValBuyer, set1, set2, 
-                                     pro_, checkBuyer, UnmappedSellers, pro_s, 
-                                     hourChosen, sellerAssosciated, pro_re, 
-                                     bid, price, pro_v, pro, other_, test, 
-                                     other >>
+                                     flagValBuyer, finalValBuyer, flagBuyers, 
+                                     flagSellers, pro_, checkBuyer, 
+                                     UnmappedSellers, pro_s, hourChosen, 
+                                     sellerAssosciated, npc, pro_re, bid, 
+                                     price, pro_v, pro, other_, test, other >>
 
 matching2(self) == /\ pc[self] = "matching2"
                    /\ /\ pro_' = [pro_ EXCEPT ![self] = self]
@@ -995,35 +1030,59 @@ matching2(self) == /\ pc[self] = "matching2"
                                    validBuyers, validSellers, validBuyerWallet, 
                                    mapBuyerToSeller, valBuyer, valSeller, 
                                    clearingPrice, temp, flagValBuyer, 
-                                   finalValBuyer, set1, set2, pro_s, 
-                                   hourChosen, sellerAssosciated, pro_r, offer, 
-                                   price_, pro_re, bid, price, pro_v, pro, 
-                                   other_, test, other >>
+                                   finalValBuyer, flagBuyers, flagSellers, 
+                                   pro_s, hourChosen, sellerAssosciated, npc, 
+                                   pro_r, offer, price_, pro_re, bid, price, 
+                                   pro_v, pro, other_, test, other >>
 
 settlement2(self) == /\ pc[self] = "settlement2"
-                     /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
-                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "settlement",
-                                                                 pc        |->  "Done",
-                                                                 hourChosen |->  hourChosen[self],
-                                                                 sellerAssosciated |->  sellerAssosciated[self],
-                                                                 pro_s     |->  pro_s[self] ] >>
-                                                             \o stack[self]]
-                     /\ hourChosen' = [hourChosen EXCEPT ![self] = 1]
-                     /\ sellerAssosciated' = [sellerAssosciated EXCEPT ![self] = 4]
-                     /\ pc' = [pc EXCEPT ![self] = "awaitForSellersAndBuyers"]
+                     /\ IF self \in validSellers
+                           THEN /\ flagSellers' = TRUE
+                                /\ pc' = [pc EXCEPT ![self] = "loopJO1"]
+                           ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
+                                /\ UNCHANGED flagSellers
                      /\ UNCHANGED << attack, bankBalance, registry, 
                                      periodicEnergyBids, periodicEnergyOffers, 
                                      validBuyers, validSellers, 
                                      validBuyerWallet, mapBuyerToSeller, 
                                      valBuyer, valSeller, clearingPrice, temp, 
-                                     flagValBuyer, finalValBuyer, set1, set2, 
-                                     pro_, checkBuyer, UnmappedSellers, pro_r, 
-                                     offer, price_, pro_re, bid, price, pro_v, 
-                                     pro, other_, test, other >>
+                                     flagValBuyer, finalValBuyer, flagBuyers, 
+                                     stack, pro_, checkBuyer, UnmappedSellers, 
+                                     pro_s, hourChosen, sellerAssosciated, npc, 
+                                     pro_r, offer, price_, pro_re, bid, price, 
+                                     pro_v, pro, other_, test, other >>
+
+loopJO1(self) == /\ pc[self] = "loopJO1"
+                 /\ IF ~flagBuyers
+                       THEN /\ TRUE
+                            /\ pc' = [pc EXCEPT ![self] = "loopJO1"]
+                            /\ UNCHANGED << stack, pro_s, hourChosen, 
+                                            sellerAssosciated, npc >>
+                       ELSE /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
+                               /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "settlement",
+                                                                        pc        |->  "Done",
+                                                                        hourChosen |->  hourChosen[self],
+                                                                        sellerAssosciated |->  sellerAssosciated[self],
+                                                                        npc       |->  npc[self],
+                                                                        pro_s     |->  pro_s[self] ] >>
+                                                                    \o stack[self]]
+                            /\ hourChosen' = [hourChosen EXCEPT ![self] = 1]
+                            /\ sellerAssosciated' = [sellerAssosciated EXCEPT ![self] = 4]
+                            /\ npc' = [npc EXCEPT ![self] = 0]
+                            /\ pc' = [pc EXCEPT ![self] = "awaitForSellersAndBuyers"]
+                 /\ UNCHANGED << attack, bankBalance, registry, 
+                                 periodicEnergyBids, periodicEnergyOffers, 
+                                 validBuyers, validSellers, validBuyerWallet, 
+                                 mapBuyerToSeller, valBuyer, valSeller, 
+                                 clearingPrice, temp, flagValBuyer, 
+                                 finalValBuyer, flagBuyers, flagSellers, pro_, 
+                                 checkBuyer, UnmappedSellers, pro_r, offer, 
+                                 price_, pro_re, bid, price, pro_v, pro, 
+                                 other_, test, other >>
 
 seller(self) == register_seller(self) \/ validate(self)
                    \/ sell_energy(self) \/ matching2(self)
-                   \/ settlement2(self)
+                   \/ settlement2(self) \/ loopJO1(self)
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
@@ -1058,5 +1117,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Mon Feb 26 02:13:06 GMT 2024 by naufa
+\* Last modified Wed Feb 28 12:55:41 GMT 2024 by naufa
 \* Created Fri Jan 05 10:01:04 GMT 2024 by naufa
