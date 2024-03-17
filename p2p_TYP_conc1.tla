@@ -313,6 +313,7 @@ begin
 \*   awaitLockTrue:
 \*    await lockBuy = TRUE /\ lockSell = TRUE;
     
+    
   settlement:
      SellerState[pro] := "settlement";
    \*The following label in this operation is to allow the transfer of commodities
@@ -540,7 +541,7 @@ begin
     loopJO2:
     lockSell := TRUE;
     await flagBuyers = FALSE;
-    BuyerState[pro] := "settlement";
+    BuyerState[self] := "settlement";
     call settlementBuyer(self);
 \*    SetToTrue:
 \*    flagSettlement := flagSettlement + 1;
@@ -573,23 +574,23 @@ begin
  end process;
 
 end algorithm*)
-\* BEGIN TRANSLATION (chksum(pcal) = "1cba39aa" /\ chksum(tla) = "1757d440")
+\* BEGIN TRANSLATION (chksum(pcal) = "bca7bcdf" /\ chksum(tla) = "23b185cc")
 \* Label matching of procedure matching at line 146 col 5 changed to matching_
 \* Label settlementBuyer of procedure settlementBuyer at line 254 col 3 changed to settlementBuyer_
 \* Label returnSettlement of procedure settlementBuyer at line 292 col 4 changed to returnSettlement_
-\* Process variable other of process buyer at line 520 col 3 changed to other_
+\* Process variable other of process buyer at line 521 col 3 changed to other_
 \* Procedure variable hourChosen of procedure settlementBuyer at line 237 col 11 changed to hourChosen_
 \* Procedure variable sellerAssosciated of procedure settlementBuyer at line 237 col 27 changed to sellerAssosciated_
 \* Procedure variable npc of procedure settlementBuyer at line 237 col 50 changed to npc_
 \* Procedure variable commodity1 of procedure settlementBuyer at line 238 col 12 changed to commodity1_
 \* Procedure variable commodity2 of procedure settlementBuyer at line 238 col 29 changed to commodity2_
-\* Procedure variable price of procedure registerMarketSellOrder at line 453 col 11 changed to price_
+\* Procedure variable price of procedure registerMarketSellOrder at line 454 col 11 changed to price_
 \* Parameter pro of procedure matching at line 138 col 20 changed to pro_
 \* Parameter pro of procedure settlementBuyer at line 236 col 27 changed to pro_s
 \* Parameter pro of procedure settlementSeller at line 299 col 28 changed to pro_se
-\* Parameter pro of procedure registerMarketSellOrder at line 451 col 36 changed to pro_r
-\* Parameter pro of procedure registerMarketBuyOrder at line 471 col 35 changed to pro_re
-\* Parameter pro of procedure validateAccount at line 493 col 27 changed to pro_v
+\* Parameter pro of procedure registerMarketSellOrder at line 452 col 36 changed to pro_r
+\* Parameter pro of procedure registerMarketBuyOrder at line 472 col 35 changed to pro_re
+\* Parameter pro of procedure validateAccount at line 494 col 27 changed to pro_v
 CONSTANT defaultInitValue
 VARIABLES attack, bankBalance, registry, periodicEnergyBids, 
           periodicEnergyOffers, validBuyers, validSellers, validBuyers_copy, 
@@ -1550,7 +1551,7 @@ settlement1(self) == /\ pc[self] = "settlement1"
 loopJO2(self) == /\ pc[self] = "loopJO2"
                  /\ lockSell' = TRUE
                  /\ flagBuyers = FALSE
-                 /\ BuyerState' = [BuyerState EXCEPT ![pro[self]] = "settlement"]
+                 /\ BuyerState' = [BuyerState EXCEPT ![self] = "settlement"]
                  /\ /\ pro_s' = [pro_s EXCEPT ![self] = self]
                     /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "settlementBuyer",
                                                              pc        |->  "Done",
@@ -1788,5 +1789,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Mar 17 17:08:53 GMT 2024 by naufa
+\* Last modified Sun Mar 17 17:18:48 GMT 2024 by naufa
 \* Created Fri Jan 05 10:01:04 GMT 2024 by naufa
